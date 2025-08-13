@@ -38,7 +38,8 @@ parser.add_argument("--trial_name" , "-t", type=str)
 parser.add_argument("--cam_calibration_file", "-c", type=str)
 parser.add_argument("--crop_start", type=float) # Pass the ROS timestamp that you want to crop away all data before. Data will still be used to compute transforms.
 parser.add_argument("--override_april_start", type=str )
-parser.add_argument("--in_router_data", "a", type=str) # Absolute file path of timestamped AoA CSV file.
+parser.add_argument("--in_router_data", type=str) # Absolute file path of timestamped AoA CSV file.
+parser.add_argument("--in_tx_data", type=str)
 parser.add_argument("--plot_world", default=False, type=bool) # Generate a plot of router positions and aoa vectors in world frame when done?
 
 args = parser.parse_args()
@@ -58,8 +59,7 @@ in_router_data = args.in_router_data
 in_slam = f'../orbslam/out/{args.trial_name}_cam_traj.txt'
 in_slam_kf = f'../orbslam/out/{args.trial_name}_kf_traj.txt'
 in_kalibr = f"../kalibr/camimu_out/{args.cam_calibration_file}-camchain-imucam.yaml"
-in_apriltags = f"../world/{args.apriltags_file}"
-in_anchors = f"../world/{args.anchors_file}"
+in_tx = f"../world/{args.in_tx_data}"
 
 bagpath = Path(f'../collect/ros2/{args.trial_name}')
 
