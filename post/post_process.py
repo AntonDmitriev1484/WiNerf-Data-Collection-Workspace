@@ -67,7 +67,13 @@ slam_kf_data[:,0] *= 1e-9
 slam_data = np.loadtxt(in_slam)
 slam_data[:,0] *= 1e-9 # Adjust timestamps to be in 's'
 
-aoa_data = np.loadtxt(in_router_data)
+router_data = np.load(in_router_data)
+print(f" {router_data.files=}")
+
+t_router = router_data['timestamps']
+csi_data = router_data['csi_data']
+aoa_rx_frame = router_data['aoa_matrix']
+
 
 # Need to maintain another array that we can buffer data to before dumping one sensor per csv
 topic_to_processing = {
@@ -118,16 +124,11 @@ def filtt2(arr): # For filtering a CSV output
 
 
 ### Define all coordinate transforms
-Transforms = SimpleNamespace()
-Transforms.T_body_to_imu = np.array([
-                                        [1, 0, 0, 0],
-                                        [0, 0, 1, 0],
-                                        [0, -1, 0, 0],
-                                        [0, 0, 0, 1]
-                                    ])
 
-Transforms.T_body_to_decawave = np.eye(4)
-Transforms.T_body_to_decawave[:3,3] = np.array([-0.12, 0.015, -0.1])
+# body = rx
+# cam1 = sbody
+# cam1(t=0) = sorigin
+Transforms = SimpleNamespace()
 
 
 Transforms.T_cam1_to_rx = np.array([]) # TODO
@@ -145,7 +146,6 @@ if args.override_april_start is not None:
 # Compute initial pose estimate using optimizer.
 # Super hacky solution. Basically just forces trajectory to be in XY plane at a Z level with the origin.
 # We can do this because it's a roomba moving on flat ground.
-Transforms.T_slam_world[:3, 3] = np.array(json.loads(args.override_april_start))
 T_prior = np.eye(4)
 R_prior = np.array([[1, 0 ,0 ],
                     [0, 0, 1],
@@ -213,18 +213,16 @@ result_theta = result.x[0] # Result has a bizzare projection instead of rotation
 print(f" Selected Theta: {result.x[0] * 180/np.pi}")
 print("Final loss:", result.fun)
 print(f" Initial Rotation {R_prior}")
-
 Transforms.T_world_to_sorigin = rotate_about_world_x(T_prior, result_theta)
 print(f" Final rotation { Transforms.T_world_to_sorigin[:3, :3]}")
 
 
-# T_world_to_body = T_body_to_imu^-1 x T_imu_to_sbody^-1 x T_sorigin_to_sbody x T_world_to_sorigin
+# T_world_to_body = T_cam1_to_rx x T_sorigin_to_sbody x T_world_to_sorigin
 def get_T_world_to_body(T_sorigin_to_sbody): # A function because I re-use this a lot
     T_world_to_body = (
                     Transforms.T_world_to_sorigin 
                     @ T_sorigin_to_sbody 
-                    @ np.linalg.inv(Transforms.T_imu_to_sbody) 
-                    @ np.linalg.inv(Transforms.T_body_to_imu)
+                    @ Transforms.T_cam1_to_rx
     )
     return T_world_to_body
 
@@ -234,60 +232,119 @@ for j in topic_to_processing['/camera/camera/imu'][1]:
     csv_row = []
     for k, v in j.items(): csv_row.append(v)
     imu_csv.append(csv_row)
-    all_data.append(j)
 with open(f'{out_slam}/imu_data.csv', 'w') as fs: csv.writer(fs).writerows(filtt2(imu_csv))
 
 ### Write SLAM camera trajectory
-body_poses_world_frame = [] # More accurately, this is a list of T_world_to_body
 slam_poses_slam_frame = [] # This is a list of T_sorigin_to_sbody
 slam_pose_counter = 0
-
-all_data_synthetic = [] # Keep interpolated points in a separate file from all.json
-
 for i in range(slam_data.shape[0]-1):
-
     T_sorigin_to_sbody = slam_quat_to_HTM(slam_data[i,:])
     slam_poses_slam_frame.append( [slam_data[i,0]] + list(T_sorigin_to_sbody.flatten()) )
-
-    T_world_to_body = get_T_world_to_body(T_sorigin_to_sbody)
-
-    body_poses_world_frame.append( [slam_data[i,0]] + list(T_world_to_body.flatten()) )
-
-    # NOTE: Not changing these field names because I don't want to blow up all downstream programs
-    j = {
-        "t": slam_data[i,0],
-        "type": "slam_pose",
-        "T_body_slam" : T_sorigin_to_sbody,
-        "T_body_world" : T_world_to_body
-    }
-    all_data.append(j) # Append GT data into the sensor stream to use as Pose3 corrections
     slam_pose_counter += 1
+
+
+# Using the SLAM trajectory (body pose in the slam frame), and known AoA timestamps
+# Compute an interpolated SLAM trajectory of the body pose in the world frame,
+# s.t. each pose is timestamp aligned to each AoA measurement.
+
+N_POINTS = 100
+
+body_poses_world_frame = [] #Poses of body in world frame, interpolated to match AoA measurements.
+for i in range(t_router.shape[0]-1):
+
+    # Get the closest SLAM measurements to the router timestamp
+    tdiffs = np.abs(slam_data[:,0] - t_router[i])
+    slam_idx1 = np.argmin(tdiffs)
+    tdiffs[slam_idx1] = np.inf
+    slam_idx2 = np.argmin(tdiffs)
+    istart, iend = sorted([slam_idx1, slam_idx2]) # Make sure indices are ascending
+
+    # Make sure poses we're interpolating between are for the body in the world frame
+    current_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[istart, :]))
+    next_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[iend, :]))
+
+    # Now interpolate between these two poses
+    interp_interval = [slam_data[istart,0], slam_data[iend, 0]]
+    interp_timestamps = np.linspace(slam_data[istart,0], slam_data[iend, 0], N_POINTS)
+
+    # Use Slerp to interpolate on SO(3) rotations
+    interp_rots = R.from_matrix([current_pose[:3, :3], next_pose[:3, :3]])
+    slurpy = Slerp(interp_interval, interp_rots)
+    interpolated_rotations = slurpy(interp_timestamps)
+
+    # Use linspace to interpolate on R3 positions
+    interpolated_positions = np.linspace(current_pose[:3, 3], next_pose[:3, 3], N_POINTS)
+
+    # Get the closest interpolation timestamp to the router timestamp,
+    # and map that interpolated pose to the measurement
+    idx_match = np.argmin(np.abs(interp_timestamps - t_router[i]))
+
+    world_frame_pose = np.eye(4)
+    world_frame_pose[:3,:3] = interpolated_rotations[idx_match].as_matrix()
+    world_frame_pose[:3, 3] = interpolated_positions[idx_match]
+
+    body_poses_world_frame.append(world_frame_pose)
+
 
 
 with open(f'{out_slam}/body_poses_world_frame.csv', 'w') as fs: csv.writer(fs).writerows(filtt2(body_poses_world_frame))
 with open(f'{out_slam}/slam_poses_slam_frame.csv', 'w') as fs: csv.writer(fs).writerows(filtt2(slam_poses_slam_frame))
 
 
-### Now convert all AoA data to the world frame
+### Now convert all AoA vectors to the world frame
 
-body_poses_world_frame_AoA_aligned = [] # Let this be a list of HTMs, rather than timestamp + flattened HTM
-# We'll interpolate a slam pose to match an AoA measurement timestamp
+all_aoa_vectors_world_frame = []
+all_aoa_vectors_world_frame_rotation = []
 
-aoa_vectors_world_frame = []
-# Assuming each slam pose is perfectly aligned with AoA!!
-for i in range(aoa_data.shape[0]-1):
+for i in range(t_router.shape[0]-1):
 
-    aoa_rx_frame = aoa_data[i, :]
-    aoa_world_frame = body_poses_world_frame_AoA_aligned[i] @ aoa_rx_frame
+    aoa_vectors_rx_frame = aoa_rx_frame[i, :] # Should be an array of 5-6 paths x 3
+    n_paths = aoa_vectors_rx_frame.shape[0]
 
-    aoa_vectors_world_frame.append(aoa_world_frame)
+    aoa_vectors_world_frame = np.empty_like(aoa_vectors_rx_frame)
 
-# TODO, log body_poses_world_frame_AoA_aligned in TUM format in CSV
-# log Aoa_vectors_world frame in rpy in CSV?
+    # Using the known pose of the body in the world frame, at time t
+    # Map each path at time t into the world frame.
+    T_rx_to_world = np.linalg.inv(body_poses_world_frame[i])
+
+    # This computation takes the 'tip' of the AoA unit vector in rx frame coordinates
+    # And maps it to the 'tip' of the AoA unit vector in world frame coordinates.
+    # This means that this will return points w.r.t world origin, and not w.r.t rx frame origin in world frame.
+    for path_idx in n_paths:
+        aoa_vectors_world_frame[path_idx,:] = T_rx_to_world @ np.hstack(aoa_vectors_rx_frame[path_idx, :], [1])
+    all_aoa_vectors_world_frame.append(aoa_vectors_world_frame)
+
+    # This computation rotates the AoA unit vector from rx frame coordinates into world frame coordinates.
+    # This means that the tip of this unit vector will be w.r.t 0,0,0, but its rotation will be
+    # consistent with the world axes.
+    aoa_vectors_world_frame_rotation = np.empty_like(aoa_vectors_rx_frame)
+    for path_idx in n_paths:
+        aoa_vectors_world_frame_rotation[path_idx, :] = T_rx_to_world[:3,3] @ aoa_vectors_rx_frame[path_idx, :]
+    all_aoa_vectors_world_frame_rotation.append(aoa_vectors_world_frame_rotation)
+    # These will provide the RPY of the vector along world frame axes, as measured at the receiver's origin.
+
+positions_world = []
+for body_pose in body_poses_world_frame:
+    positions_world.append(body_pose[:3,3].flatten())
+
+aoa_vectors_world = []
+for aoa_vector in all_aoa_vectors_world_frame_rotation:
+    aoa_vectors_world.append(aoa_vector)
 
 
+t_router = router_data['timestamps']
+csi_data = router_data['csi_data']
+aoa_rx_frame = router_data['aoa_matrix']
 
-
+# TODO: rename to whatever keys Saif uses
+np.savez(
+        outpath+"/roomba_data_world.npz", 
+        timestamps = router_data['timestamps'], 
+        csi_data = router_data['csi_data'],
+        aoa_matrix = router_data['aoa_matrix'],
+        aoa_matrix_world=aoa_vectors_world, 
+        positions_world=positions_world
+        )
 
 
 ### Write Infra1 frames to output directory, and provide references in all_data
