@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
+from scipy.optimize import minimize
 from types import SimpleNamespace
 
 import shutil
@@ -36,9 +37,8 @@ parser = argparse.ArgumentParser(description="Stream collector")
 parser.add_argument("--trial_name" , "-t", type=str)
 parser.add_argument("--cam_calibration_file", "-c", type=str)
 parser.add_argument("--crop_start", type=float) # Pass the ROS timestamp that you want to crop away all data before. Data will still be used to compute transforms.
-parser.add_argument("--apriltags_file", "-p", type=str)
 parser.add_argument("--override_april_start", type=str )
-parser.add_argument("--in_aoa", "a", type=str) # Absolute file path of timestamped AoA CSV file.
+parser.add_argument("--in_router_data", "a", type=str) # Absolute file path of timestamped AoA CSV file.
 
 args = parser.parse_args()
 
@@ -53,7 +53,7 @@ os.makedirs(out_infra1, exist_ok=True)
 os.makedirs(out_infra2, exist_ok=True)
 os.makedirs(out_slam, exist_ok=True)
 
-in_aoa = args.in_aoa
+in_router_data = args.in_router_data
 in_slam = f'../orbslam/out/{args.trial_name}_cam_traj.txt'
 in_slam_kf = f'../orbslam/out/{args.trial_name}_kf_traj.txt'
 in_kalibr = f"../kalibr/camimu_out/{args.cam_calibration_file}-camchain-imucam.yaml"
@@ -67,7 +67,7 @@ slam_kf_data[:,0] *= 1e-9
 slam_data = np.loadtxt(in_slam)
 slam_data[:,0] *= 1e-9 # Adjust timestamps to be in 's'
 
-aoa_data = np.loadtxt(in_aoa)
+aoa_data = np.loadtxt(in_router_data)
 
 # Need to maintain another array that we can buffer data to before dumping one sensor per csv
 topic_to_processing = {
@@ -134,11 +134,88 @@ Transforms.T_cam1_to_rx = np.array([]) # TODO
 Transforms.T_body_to_cam1 = np.linalg.inv(Transforms.T_cam1_to_rx)
 
 infra1_raw_frames = topic_to_processing['/camera/camera/infra1/image_rect_raw'][1]
-Transforms = extract_apriltag_pose(slam_data, infra1_raw_frames, Transforms, in_kalibr, in_apriltags)
+# Transforms = extract_apriltag_pose(slam_data, infra1_raw_frames, Transforms, in_kalibr, in_apriltags)
 # Transforms = extract_apriltag_pose_PnP(slam_data, infra1_raw_frames, Transforms, in_kalibr, in_apriltags)
 
 if args.override_april_start is not None:
-    Transforms.T_slam_world[:3, 3] = np.array(json.loads(args.override_april_start))
+    print(" Need to set manual starting point for this dataset collection!")
+    print(" Sorry :(")
+    exit()
+
+# Compute initial pose estimate using optimizer.
+# Super hacky solution. Basically just forces trajectory to be in XY plane at a Z level with the origin.
+# We can do this because it's a roomba moving on flat ground.
+Transforms.T_slam_world[:3, 3] = np.array(json.loads(args.override_april_start))
+T_prior = np.eye(4)
+R_prior = np.array([[1, 0 ,0 ],
+                    [0, 0, 1],
+                    [0, -1, 0]], dtype=np.float64)
+T_prior[:3,:3] = R_prior
+T_prior[:3,3] = np.array(json.loads(args.override_april_start))
+Transforms.T_world_to_sorigin[:3, 3] = np.array(json.loads(args.override_april_start))
+best_Z = Transforms.T_world_to_sorigin[2,3]
+
+def rotate_about_world_x(T, theta):
+    # Rotate to world frame, then rotate by the adjustment along world frame x axis.
+    R_about_world_x = np.array([[1, 0, 0, 0], 
+                                [0, np.cos(theta), -np.sin(theta), 0],
+                                [0, np.sin(theta), np.cos(theta), 0],
+                                [0,0,0,1]], dtype=np.float64)
+    T_ = T.copy()
+    T_ =  R_about_world_x @ T
+    return T_
+
+def minimize_for_world_pose(slam_data, best_Z, T_world_to_sorigin, Transforms):
+
+
+    def get_T_world_to_body(T_sorigin_to_sbody): # A function because I re-use this a lot
+        T_world_to_body = (
+                        T_world_to_sorigin
+                        @ T_sorigin_to_sbody 
+                        @ np.linalg.inv(Transforms.T_imu_to_sbody) 
+                        @ np.linalg.inv(Transforms.T_body_to_imu)
+        )
+        return T_world_to_body
+
+    body_poses_world_frame = []
+    zs = []
+    for i in range(slam_data.shape[0]-1):
+
+        T_sorigin_to_sbody = slam_quat_to_HTM(slam_data[i,:])
+        T_world_to_body = get_T_world_to_body(T_sorigin_to_sbody)
+        body_poses_world_frame.append( T_world_to_body )
+        zs.append(T_world_to_body[2,3])
+
+    # The best (lowest) score has the lowest total error in each poses Z-coordinate
+    # score = sum([ abs( best_Z - T_world_to_body[2,3]) ** 2 for T_world_to_body in body_poses_world_frame])
+    score = np.var(np.abs(np.array(zs)-best_Z))
+
+    return score
+
+def distance_to_XY_plane_loss(theta):
+    print(f" Trying theta: {theta * 180/np.pi}")
+
+    T_world_to_sorigin = np.eye(4)
+    T_world_to_sorigin[:3,:3] = R_prior # Im pretty sure this is the right order for python
+    T_world_to_sorigin[:3,3] = Transforms.T_world_to_sorigin[:3, 3]
+
+    T_world_to_sorigin = rotate_about_world_x(T_world_to_sorigin, float(theta[0]))
+
+    # Make sure you deep copy slam data every time
+    score = minimize_for_world_pose(slam_data.copy(), best_Z, T_world_to_sorigin, Transforms)
+    print(f" Score {score}")
+    return score
+
+INITIAL_THETA = np.array([0]) # Initial guess on theta is 0 rad
+result = minimize(distance_to_XY_plane_loss, INITIAL_THETA, method = 'Nelder-Mead')
+result_theta = result.x[0] # Result has a bizzare projection instead of rotation effect when included in pose chain?
+# Didn't really have time to debug this.
+print(f" Selected Theta: {result.x[0] * 180/np.pi}")
+print("Final loss:", result.fun)
+print(f" Initial Rotation {R_prior}")
+
+Transforms.T_world_to_sorigin = rotate_about_world_x(T_prior, result_theta)
+print(f" Final rotation { Transforms.T_world_to_sorigin[:3, :3]}")
 
 
 # T_world_to_body = T_body_to_imu^-1 x T_imu_to_sbody^-1 x T_sorigin_to_sbody x T_world_to_sorigin
