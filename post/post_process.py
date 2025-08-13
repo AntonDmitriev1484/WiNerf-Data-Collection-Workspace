@@ -28,7 +28,7 @@ from utils.math_utils import *
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
-
+import pickle
 # Example usage:
 # python3 post_process.py -t stereoi_sq -c cam_target_daslab -a pilot3/anchors.json -p pilot3/apriltags.json -i 10
 
@@ -39,6 +39,7 @@ parser.add_argument("--cam_calibration_file", "-c", type=str)
 parser.add_argument("--crop_start", type=float) # Pass the ROS timestamp that you want to crop away all data before. Data will still be used to compute transforms.
 parser.add_argument("--override_april_start", type=str )
 parser.add_argument("--in_router_data", "a", type=str) # Absolute file path of timestamped AoA CSV file.
+parser.add_argument("--plot_world", default=False, type=bool) # Generate a plot of router positions and aoa vectors in world frame when done?
 
 args = parser.parse_args()
 
@@ -331,11 +332,6 @@ aoa_vectors_world = []
 for aoa_vector in all_aoa_vectors_world_frame_rotation:
     aoa_vectors_world.append(aoa_vector)
 
-
-t_router = router_data['timestamps']
-csi_data = router_data['csi_data']
-aoa_rx_frame = router_data['aoa_matrix']
-
 # TODO: rename to whatever keys Saif uses
 np.savez(
         outpath+"/roomba_data_world.npz", 
@@ -346,6 +342,61 @@ np.savez(
         positions_world=positions_world
         )
 
+# Plot results
+
+body_orientation_stride = 50
+aoa_vector_stride = 10
+
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+
+ax.plot(positions_world[:, 0], positions_world[:, 1], positions_world[:, 2], label='Trajectory', color='blue')
+ax.scatter(*positions_world[0], color='green', label='Start')
+ax.scatter(*positions_world[-1], color='red', label='End')
+
+def draw_axes(ax, T, length=0.1):
+    """Draw coordinate axes from transformation matrix T."""
+    origin = T[:3, 3]
+    x_axis = T[:3, 0] * length
+    y_axis = T[:3, 1] * length
+    z_axis = T[:3, 2] * length
+
+    ax.quiver(*origin, *x_axis, color='r', length=length, normalize=False)
+    ax.quiver(*origin, *y_axis, color='g', length=length, normalize=False)
+    ax.quiver(*origin, *z_axis, color='b', length=length, normalize=False)
+
+if body_orientation_stride > 0:
+    for i in range(0, len(body_poses_world_frame), body_orientation_stride):
+        draw_axes(ax, body_poses_world_frame[i], length=0.4)
+
+def draw_vector(ax, T, length=0.1):
+    """Draw coordinate axes from transformation matrix T."""
+    origin = T[:3, 3]
+    x_axis = T[:3, 0] * length
+    y_axis = T[:3, 1] * length
+    z_axis = T[:3, 2] * length
+
+    ax.quiver(*origin, *x_axis, color='r', length=length, normalize=False)
+    ax.quiver(*origin, *y_axis, color='g', length=length, normalize=False)
+    ax.quiver(*origin, *z_axis, color='b', length=length, normalize=False)
+
+if aoa_vector_stride > 0:
+    length = 0.5
+    n_vectors = 1 # Plot first N paths
+    for i in range(0, len(positions_world), aoa_vector_stride):
+        for j in range(n_vectors):
+            origin = positions_world[i]
+            tip = positions_world[i] + aoa_vectors_world[i][j,:]
+            ax.quiver(*origin, *tip, color='purple', length=length, normalize=False)
+
+ax.set_xlabel("X")
+ax.set_ylabel("Y")
+ax.set_zlabel("Z")
+ax.set_title("Trajectory and Static Coordinate Frames")
+ax.view_init(elev=20, azim=45)
+ax.legend()
+plt.show()
+pickle.dump(fig, open(outpath+"/trial_viz.pickle", 'wb'))
 
 ### Write Infra1 frames to output directory, and provide references in all_data
 for j in topic_to_processing['/camera/camera/infra1/image_rect_raw'][1]:
