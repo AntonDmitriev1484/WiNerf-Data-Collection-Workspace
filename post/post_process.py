@@ -79,10 +79,6 @@ signal_strength = router_data['strength']
 all_data = []
 gt_standalone = []
 
-# Processors functions have now buffered their individual topics into arr_ref
-# This is useful for writing the same datastream to multiple files.
-# Then, lastly, we can create all.json using the buffered measurements.
-
 rostypes = load_rostypes()
 print(rostypes)
 
@@ -95,6 +91,11 @@ with AnyReader([bagpath], default_typestore=rostypes) as reader:
 
 print(f"ROS duration {START} - {END}")
 print(f"Data start {START} cropped to {args.crop_start}")
+
+# winerf_prelim2
+# ROS duration 1755120873.7234828 - 1755121110.4828684
+# Data start 1755120873.7234828 cropped to 1755121059.7234828
+
 
 def filtt(arr): # For filtering a json output
     if args.crop_start is not None: arr = list(filter(lambda x: (args.crop_start <= x["t"]), arr)) # First filter by crop
@@ -226,7 +227,7 @@ for i in range(slam_data.shape[0]-1):
 N_POINTS = 100
 
 body_poses_world_frame = [] #Poses of body in world frame, interpolated to match AoA measurements.
-for i in range(t_router.shape[0]-1):
+for i in range(t_router.shape[0]):
 
     # Get the closest SLAM measurements to the router timestamp
     tdiffs = np.abs(slam_data[:,0] - t_router[i])
@@ -267,7 +268,7 @@ for i in range(t_router.shape[0]-1):
 all_aoa_vectors_world_frame = []
 all_aoa_vectors_world_frame_rotation = []
 
-for i in range(t_router.shape[0]-1):
+for i in range(t_router.shape[0]):
 
     aoa_vectors_rx_frame = aoa_rx_frame[i, :] # Should be an array of N paths x 3
     n_paths = aoa_vectors_rx_frame.shape[0]
@@ -291,26 +292,27 @@ for i in range(t_router.shape[0]-1):
     aoa_vectors_world_frame_rotation = np.empty_like(aoa_vectors_rx_frame)
     for path_idx in range(n_paths):
         v_rx = aoa_vectors_rx_frame[path_idx, :]
-        print(f" magnitude in rx frame {np.linalg.norm(v_rx)}")
         v_world = np.linalg.inv(T_rx_to_world[:3,:3]) @ aoa_vectors_rx_frame[path_idx, :]
-        print(f" magnitude in world frame {np.linalg.norm(v_world)}")
         aoa_vectors_world_frame_rotation[path_idx, :] = np.linalg.inv(T_rx_to_world[:3,:3]) @ aoa_vectors_rx_frame[path_idx, :]
         # Pretty sure these are unit vectors, so its the plotting that must be wrong.
 
     all_aoa_vectors_world_frame_rotation.append(aoa_vectors_world_frame_rotation)
     # These will provide the RPY of the vector along world frame axes, as measured at the receiver's origin.
 
+valid_timestamp_idx = list(np.where((t_router > args.crop_start) & (t_router < END))[0])
 
+# Apply timestamp filtering here.
 positions_world = []
-for body_pose in body_poses_world_frame:
-    positions_world.append(body_pose[:3,3].flatten())
-
 aoa_vectors_world = []
-for aoa_vector in all_aoa_vectors_world_frame_rotation:
-    for i in range(aoa_vector.shape[0]):
-        print(f"{aoa_vector[i,:]=} {np.linalg.norm(aoa_vector[i,:])=}")
-    aoa_vectors_world.append(aoa_vector)
 
+i=0
+for body_pose, aoa_vector in zip(body_poses_world_frame, all_aoa_vectors_world_frame_rotation):
+    if i in valid_timestamp_idx:
+        positions_world.append(body_pose[:3,3].flatten())
+        aoa_vectors_world.append(aoa_vector)
+    i+=1
+
+print(positions_world[:5])
 np.savez(
         outpath+"/roomba_data_world.npz", 
         timestamps = router_data['timestamps'], 
@@ -323,8 +325,8 @@ np.savez(
 
 # Plot results
 
-body_orientation_stride = 100
-aoa_vector_stride = 100
+body_orientation_stride = 0
+aoa_vector_stride = 5
 
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
@@ -334,6 +336,9 @@ aoa_vectors_world = np.array(aoa_vectors_world)
 ax.plot(positions_world[:, 0], positions_world[:, 1], positions_world[:, 2], label='Trajectory', color='blue')
 ax.scatter(*positions_world[0], color='green', label='Start')
 ax.scatter(*positions_world[-1], color='red', label='End')
+
+tx_loc = np.array(json.load(open(in_tx, 'r'))["position"])
+ax.scatter(*tx_loc, color = 'purple', s=0.5)
 
 def draw_axes(ax, T, length=0.1):
     """Draw coordinate axes from transformation matrix T."""
@@ -351,14 +356,13 @@ if body_orientation_stride > 0:
         draw_axes(ax, body_poses_world_frame[i], length=0.4)
 
 if aoa_vector_stride > 0:
-    length = 0.2
+    length = 0.25
     n_vectors = 1 # Plot first N paths
     for i in range(0, len(positions_world), aoa_vector_stride):
         for j in range(n_vectors):
             origin = positions_world[i]
             tip = aoa_vectors_world[i][j,:]
-            print(f"{np.linalg.norm(tip-origin)=}")
-            ax.quiver(*origin, *tip, color='purple')
+            ax.quiver(*origin, *tip, color='purple', length=length)
 
 ax.set_xlabel("X")
 ax.set_ylabel("Y")
@@ -390,10 +394,5 @@ with open(f'{outpath}/transforms.json', 'w') as fs: json.dump(vars(Transforms), 
 print("Checking frequency of real data")
 print(f" Measured SLAM frequency {len(slam_data) / (END-START)}")
 
-
-# Filter to make sure all messages ( and data jsons ) fall within the ROS recording time interval, (because some of them don't apparently)
-all_data = filtt(all_data)
-all_data = sorted(all_data, key=lambda x: x["t"])
-json.dump(all_data, open(outpath+"/all.json", 'w'), cls=NumpyEncoder, indent=1)
 
 json.dump(args.__dict__, open(outpath+"/meta.json", 'w'), cls=NumpyEncoder, indent=1)
