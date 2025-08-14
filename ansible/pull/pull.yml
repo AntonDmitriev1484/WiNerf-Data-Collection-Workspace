@@ -4,7 +4,8 @@
   vars:
     file_paths: []     # e.g., ["collect/ros1/file1.bag", "collect/ros1/dir1"]
     dir: false   # set to true if pulling directories
-
+    remote_root: "/home/admi3ev/WiNerf-Data-Collection-Workspace/"
+    local_root: "/home/antond2/Desktop/Research/WiNerf-Data-Collection-Workspace/"
 
     # Example use:
     # ansible-playbook pull.yml \
@@ -16,16 +17,16 @@
     - name: Download files using fetch (non-recursive)
       when: not dir
       fetch:
-        src: "/home/admi3ev/ws/{{ item }}"
-        dest: "/home/antond2/ws/{{ item }}"
+        src: "{{ remote_root }}{{ item }}"
+        dest: "{{ local_root }}{{ item }}"
         flat: yes
       loop: "{{ file_paths }}"
 
     - name: Download directories using synchronize (recursive)
       when: dir
       synchronize:
-        src: "/home/admi3ev/ws/{{ item }}/"
-        dest: "/home/antond2/ws/{{ item }}"
+        src: "{{ remote_root }}{{ item }}/"
+        dest: "{{ local_root }}{{ item }}"
         mode: pull
         recursive: yes
       loop: "{{ file_paths }}"

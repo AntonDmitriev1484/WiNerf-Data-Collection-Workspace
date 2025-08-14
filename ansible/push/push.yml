@@ -4,6 +4,8 @@
   vars:
     file_paths: []     # e.g., ["collect/ros1/file1.bag", "collect/ros1/dir1"]
     dir: false         # set to true if pushing directories
+    remote_root: "/home/admi3ev/WiNerf-Data-Collection-Workspace/"
+    local_root: "/home/antond2/Desktop/Research/WiNerf-Data-Collection-Workspace/"
 
     # Example use:
     # ansible-playbook push.yml \
@@ -14,15 +16,15 @@
     - name: Upload files using copy (non-recursive)
       when: not dir
       copy:
-        src: "/home/antond2/ws/{{ item }}"
-        dest: "/home/admi3ev/ws/{{ item }}"
+        src: "{{ local_root }}{{ item }}"
+        dest: "{{ remote_root }}{{ item }}"
       loop: "{{ file_paths }}"
 
     - name: Upload directories using synchronize (recursive)
       when: dir
       synchronize:
-        src: "/home/antond2/ws/{{ item }}/"
-        dest: "/home/admi3ev/ws/{{ item }}"
+        src: "{{ local_root }}{{ item }}/"
+        dest: "{{ remote_root }}{{ item }}"
         mode: push
         recursive: yes
       loop: "{{ file_paths }}"
