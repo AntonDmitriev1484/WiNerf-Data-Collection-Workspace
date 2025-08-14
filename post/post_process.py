@@ -76,45 +76,22 @@ csi_data = router_data['csi_matrix']
 aoa_rx_frame = router_data['aoa_matrix']
 signal_strength = router_data['strength']
 
-
-# Need to maintain another array that we can buffer data to before dumping one sensor per csv
-topic_to_processing = {
-                  '/camera/camera/imu': (proc_imu, []),
-                  '/camera/camera/infra1/image_rect_raw': (proc_infra1_frame, []),
-                  '/camera/camera/infra2/image_rect_raw': (proc_infra2_frame, []),
-}
-
 all_data = []
-dataset_topics = [ k for k,v in topic_to_processing.items()]
 gt_standalone = []
+
+# Processors functions have now buffered their individual topics into arr_ref
+# This is useful for writing the same datastream to multiple files.
+# Then, lastly, we can create all.json using the buffered measurements.
 
 rostypes = load_rostypes()
 print(rostypes)
 
 # Create reader instance and open for reading.
 with AnyReader([bagpath], default_typestore=rostypes) as reader:
-    connections = [x for x in reader.connections if x.topic in dataset_topics]
-    for connection, timestamp, rawdata in reader.messages(connections=connections):
-
-        try:
-            msg = reader.deserialize(rawdata, connection.msgtype)
-            proc, arr_ref = topic_to_processing[connection.topic]
-            proc(msg, arr_ref)
-
-        except Exception as e:
-            print( e)
-            continue  # optionally log here
-
-# Processors functions have now buffered their individual topics into arr_ref
-# This is useful for writing the same datastream to multiple files.
-# Then, lastly, we can create all.json using the buffered measurements.
-
-
-
-# Filter for messages within bag timestamp range.
-START = reader.start_time * 1e-9
-END = reader.end_time * 1e-9
-args.crop_start += START
+    # Filter for messages within bag timestamp range.
+    START = reader.start_time * 1e-9
+    END = reader.end_time * 1e-9
+    args.crop_start += START
 
 print(f"ROS duration {START} - {END}")
 print(f"Data start {START} cropped to {args.crop_start}")
@@ -141,7 +118,6 @@ Transforms.T_cam1_to_rx[:3,:3] = np.linalg.inv(np.array([[0,0,1], [-1,0,0], [0,-
 # Transforms.T_cam1_to_rx[:3,:3] = np.array([[0,0,1], [-1,0,0], [0,-1,0]])
 Transforms.T_body_to_cam1 = np.linalg.inv(Transforms.T_cam1_to_rx)
 
-infra1_raw_frames = topic_to_processing['/camera/camera/infra1/image_rect_raw'][1]
 # Transforms = extract_apriltag_pose(slam_data, infra1_raw_frames, Transforms, in_kalibr, in_apriltags)
 # Transforms = extract_apriltag_pose_PnP(slam_data, infra1_raw_frames, Transforms, in_kalibr, in_apriltags)
 
@@ -234,14 +210,6 @@ def get_T_world_to_body(T_sorigin_to_sbody): # A function because I re-use this 
     )
     return T_world_to_body
 
-### Write IMU data to its own csv file, and to all_data
-imu_csv = []
-for j in topic_to_processing['/camera/camera/imu'][1]:
-    csv_row = []
-    for k, v in j.items(): csv_row.append(v)
-    imu_csv.append(csv_row)
-with open(f'{out_slam}/imu_data.csv', 'w') as fs: csv.writer(fs).writerows(filtt2(imu_csv))
-
 ### Write SLAM camera trajectory
 slam_poses_slam_frame = [] # This is a list of T_sorigin_to_sbody
 slam_pose_counter = 0
@@ -301,7 +269,7 @@ all_aoa_vectors_world_frame_rotation = []
 
 for i in range(t_router.shape[0]-1):
 
-    aoa_vectors_rx_frame = aoa_rx_frame[i, :] # Should be an array of 3 paths x 3
+    aoa_vectors_rx_frame = aoa_rx_frame[i, :] # Should be an array of N paths x 3
     n_paths = aoa_vectors_rx_frame.shape[0]
 
     aoa_vectors_world_frame = np.empty_like(aoa_vectors_rx_frame)
@@ -322,9 +290,16 @@ for i in range(t_router.shape[0]-1):
     # consistent with the world axes.
     aoa_vectors_world_frame_rotation = np.empty_like(aoa_vectors_rx_frame)
     for path_idx in range(n_paths):
+        v_rx = aoa_vectors_rx_frame[path_idx, :]
+        print(f" magnitude in rx frame {np.linalg.norm(v_rx)}")
+        v_world = np.linalg.inv(T_rx_to_world[:3,:3]) @ aoa_vectors_rx_frame[path_idx, :]
+        print(f" magnitude in world frame {np.linalg.norm(v_world)}")
         aoa_vectors_world_frame_rotation[path_idx, :] = np.linalg.inv(T_rx_to_world[:3,:3]) @ aoa_vectors_rx_frame[path_idx, :]
+        # Pretty sure these are unit vectors, so its the plotting that must be wrong.
+
     all_aoa_vectors_world_frame_rotation.append(aoa_vectors_world_frame_rotation)
     # These will provide the RPY of the vector along world frame axes, as measured at the receiver's origin.
+
 
 positions_world = []
 for body_pose in body_poses_world_frame:
@@ -332,9 +307,10 @@ for body_pose in body_poses_world_frame:
 
 aoa_vectors_world = []
 for aoa_vector in all_aoa_vectors_world_frame_rotation:
+    for i in range(aoa_vector.shape[0]):
+        print(f"{aoa_vector[i,:]=} {np.linalg.norm(aoa_vector[i,:])=}")
     aoa_vectors_world.append(aoa_vector)
 
-# TODO: rename to whatever keys Saif uses
 np.savez(
         outpath+"/roomba_data_world.npz", 
         timestamps = router_data['timestamps'], 
@@ -380,7 +356,8 @@ if aoa_vector_stride > 0:
     for i in range(0, len(positions_world), aoa_vector_stride):
         for j in range(n_vectors):
             origin = positions_world[i]
-            tip = origin + aoa_vectors_world[i][j,:]
+            tip = aoa_vectors_world[i][j,:]
+            print(f"{np.linalg.norm(tip-origin)=}")
             ax.quiver(*origin, *tip, color='purple')
 
 ax.set_xlabel("X")
@@ -394,20 +371,6 @@ ax.set_ylim(0,4)
 ax.set_zlim(0,2)
 plt.show()
 pickle.dump(fig, open(outpath+"/trial_viz.pickle", 'wb'))
-
-### Write Infra1 frames to output directory, and provide references in all_data
-for j in topic_to_processing['/camera/camera/infra1/image_rect_raw'][1]:
-    cv2.imwrite(out_infra1+"/"+j["name"], j["raw"])
-    j_no_image = { k:v for k,v in j.items() if not (k == "raw") }
-    all_data.append(j_no_image)
-
-### Write Infra2 frames to output directory, and provide references in all_data
-for j in topic_to_processing['/camera/camera/infra2/image_rect_raw'][1]:
-    cv2.imwrite(out_infra2+"/"+j["name"], j["raw"])
-    j_no_image = { k:v for k,v in j.items() if not (k == "raw") }
-    all_data.append(j_no_image)
-
-
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
