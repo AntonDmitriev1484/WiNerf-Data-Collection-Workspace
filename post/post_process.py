@@ -27,6 +27,7 @@ from utils.math_utils import *
 
 
 import matplotlib.pyplot as plt
+# matplotlib.use('Agg')
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import pickle
 # Example usage:
@@ -75,6 +76,13 @@ t_router = router_data['timestamps']
 csi_data = router_data['csi_matrix']
 aoa_rx_frame = router_data['aoa_matrix']
 signal_strength = router_data['strength']
+
+closer_to_x_count = 0
+for vs in aoa_rx_frame:
+    for i in range(vs.shape[0]):
+        closer_to_x = np.dot(vs[i,:], np.array([1,0,0])) < 0.7071
+        if closer_to_x: closer_to_x_count += 1
+print(f"Percent of vectors that are closer to +x than + or -y axis: {closer_to_x_count / (len(aoa_rx_frame)*3)}")
 
 all_data = []
 gt_standalone = []
@@ -268,6 +276,11 @@ for i in range(t_router.shape[0]):
 all_aoa_vectors_world_frame = []
 all_aoa_vectors_world_frame_rotation = []
 
+SYNTHETIC_AOA = False # Just for testing that my transforms are correct.
+if SYNTHETIC_AOA:
+    # In a circle, we expect the AoA to always be pointing inwards, this would be along the +y axis of the rx fraeme
+    aoa_rx_frame[:] = np.array([0,1,0])
+
 for i in range(t_router.shape[0]):
 
     aoa_vectors_rx_frame = aoa_rx_frame[i, :] # Should be an array of N paths x 3
@@ -326,7 +339,7 @@ np.savez(
 # Plot results
 
 body_orientation_stride = 0
-aoa_vector_stride = 5
+aoa_vector_stride = 3
 
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
@@ -355,14 +368,22 @@ if body_orientation_stride > 0:
     for i in range(0, len(body_poses_world_frame), body_orientation_stride):
         draw_axes(ax, body_poses_world_frame[i], length=0.4)
 
+max_strength_idx = np.argmax(signal_strength)
+print(max_strength_idx)
+min_strength = 1e-5
+maxi, maxj = np.unravel_index(max_strength_idx, signal_strength.shape)
+max_strength = signal_strength[maxi, maxj] / 1e4
+
 if aoa_vector_stride > 0:
-    length = 0.25
-    n_vectors = 1 # Plot first N paths
+    length = 0.5
+    n_vectors = 3 # Plot first N paths
     for i in range(0, len(positions_world), aoa_vector_stride):
         for j in range(n_vectors):
+            strength = signal_strength[i,j]
             origin = positions_world[i]
             tip = aoa_vectors_world[i][j,:]
-            ax.quiver(*origin, *tip, color='purple', length=length)
+            scale = (strength - min_strength)/max_strength
+            ax.quiver(*origin, *tip, color='purple', length=length*scale )
 
 ax.set_xlabel("X")
 ax.set_ylabel("Y")
@@ -374,6 +395,10 @@ ax.set_xlim(-1, 3)
 ax.set_ylim(0,4)
 ax.set_zlim(0,2)
 plt.show()
+
+ax.view_init(elev=90, azim=-90)  # elev=90 gives top-down
+# Save to PNG with controlled resolution
+plt.savefig(outpath+"trial_viz.jpg", dpi=600, bbox_inches='tight')
 pickle.dump(fig, open(outpath+"/trial_viz.pickle", 'wb'))
 
 class NumpyEncoder(json.JSONEncoder):
