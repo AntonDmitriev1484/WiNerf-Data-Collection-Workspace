@@ -24,6 +24,7 @@ from utils.load_rostypes import *
 from utils.ros_msg_handlers import *
 from utils.apriltag import *
 from utils.math_utils import *
+from utils.load_pix4dcatch import *
 
 
 import matplotlib.pyplot as plt
@@ -38,8 +39,9 @@ import pickle
 parser = argparse.ArgumentParser(description="Stream collector")
 parser.add_argument("--trial_name" , "-t", type=str)
 parser.add_argument("--cam_calibration_file", "-c", type=str)
-parser.add_argument("--crop_start", type=float) # From now on this will be relative time instead of an absolute timestamp
+parser.add_argument("--crop_start", type=float) # From now on this will be relative time from start of recording instead of an absolute timestamp
 parser.add_argument("--override_april_start", type=str )
+parser.add_argument("--use_arkit", default=False, type=bool)
 parser.add_argument("--in_tx_location", type=str )
 parser.add_argument("--plot_world", default=False, type=bool) # Generate a plot of router positions and aoa vectors in world frame when done?
 
@@ -59,16 +61,22 @@ os.makedirs(out_slam, exist_ok=True)
 in_router_data = f'../router/{args.trial_name}.npz'
 in_slam = f'../orbslam/out/{args.trial_name}_cam_traj.txt'
 in_slam_kf = f'../orbslam/out/{args.trial_name}_kf_traj.txt'
+in_arkit = f'../arkit/{args.trial_name}/input_cameras.json'
 in_kalibr = f"../kalibr/camimu_out/{args.cam_calibration_file}-camchain-imucam.yaml"
 in_tx = f"../world/{args.in_tx_location}"
 
 bagpath = Path(f'../collect/ros2/{args.trial_name}')
 
-slam_kf_data = np.loadtxt(in_slam_kf)
-slam_kf_data[:,0] *= 1e-9
-slam_data = np.loadtxt(in_slam)
-slam_data[:,0] *= 1e-9 # Adjust timestamps to be in 's'
 
+if args.use_arkit:
+    slam_kf_data = None
+    slam_data = load_pix4dcatch(in_arkit) # Loads data and performs pre-processing transforms for us to use.
+else:
+    slam_kf_data = np.loadtxt(in_slam_kf)
+    slam_kf_data[:,0] *= 1e-9
+    slam_data = np.loadtxt(in_slam)
+    slam_data[:,0] *= 1e-9 # Adjust timestamps to be in 's'
+    
 router_data = np.load(in_router_data)
 print(f" {router_data.files=}")
 
@@ -142,6 +150,8 @@ T_prior = np.eye(4)
 R_prior = np.array([[1, 0 ,0 ],
                     [0, 0, 1],
                     [0, -1, 0]], dtype=np.float64)
+if args.use_arkit:
+    R_prior = np.array([0,0,-1], [0,1,0], [1,0,0], dtype= np.float64)
 T_prior[:3,:3] = R_prior
 T_prior[:3,3] = np.array(json.loads(args.override_april_start))
 Transforms.T_world_to_sorigin = np.eye(4)
@@ -149,6 +159,24 @@ Transforms.T_world_to_sorigin[:3, 3] = np.array(json.loads(args.override_april_s
 Transforms.T_world_to_sorigin[:3,:3] = R_prior
 best_Z = Transforms.T_world_to_sorigin[2,3]
 
+t_align = args.crop_start -1
+T_world_to_body_at_t_align = np.eye(4)
+T_world_to_body_at_t_align[:3, 3] = np.array([0.75, 3, 0.2535])
+T_world_to_body_at_t_align[:3,:3] = R_prior
+
+# Fetch the closest SLAM pose to our crop start
+idx = np.argmin(np.abs(slam_data[:,0] - t_align))
+print(f"{idx=}")
+
+T_sorigin_to_sbody_at_t_align = slam_quat_to_HTM(slam_data[idx])
+
+
+
+Transforms.T_world_to_sorigin =  T_world_to_body_at_t_align @ np.linalg.inv(T_sorigin_to_sbody_at_t_align)
+
+print(f"{T_world_to_body_at_t_align=}")
+print(f"{T_sorigin_to_sbody_at_t_align=}")
+print(f"{Transforms.T_world_to_sorigin=}")
 # def rotate_about_world_x(T, theta):
 #     # Rotate to world frame, then rotate by the adjustment along world frame x axis.
 #     R_about_world_x = np.array([[1, 0, 0, 0], 
@@ -339,7 +367,7 @@ np.savez(
 # Plot results
 
 body_orientation_stride = 0
-aoa_vector_stride = 3
+aoa_vector_stride = 0
 
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
