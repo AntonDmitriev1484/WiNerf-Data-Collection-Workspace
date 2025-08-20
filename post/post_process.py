@@ -85,6 +85,9 @@ csi_data = router_data['csi_matrix']
 aoa_rx_frame = router_data['aoa_matrix']
 signal_strength = router_data['strength']
 
+for i in range(len(aoa_rx_frame)-500, len(aoa_rx_frame)-1):
+    print(aoa_rx_frame[i][0,:])
+
 closer_to_x_count = 0
 for vs in aoa_rx_frame:
     for i in range(vs.shape[0]):
@@ -131,7 +134,15 @@ Transforms = SimpleNamespace()
 
 Transforms.T_cam1_to_rx = np.eye(4)
 Transforms.T_cam1_to_rx[:3, 3] = np.array([0,-0.089, -0.1525])
-Transforms.T_cam1_to_rx[:3,:3] = np.linalg.inv(np.array([[0,0,1], [-1,0,0], [0,-1,0]]))
+Transforms.T_cam1_to_rx[:3,:3] = np.linalg.inv(np.array([[0,0,1],
+                                                          [-1,0,0],
+                                                            [0,-1,0]]))
+
+# Transforms.T_cam1_to_rx[:3,:3] = np.linalg.inv(np.array([[0,0,1],
+#                                                         [1,0,0],
+#                                                         [0,-1,0]]))
+
+
 # Transforms.T_cam1_to_rx[:3,:3] = np.array([[0,0,1], [-1,0,0], [0,-1,0]])
 Transforms.T_body_to_cam1 = np.linalg.inv(Transforms.T_cam1_to_rx)
 
@@ -304,15 +315,27 @@ for i in range(t_router.shape[0]):
 all_aoa_vectors_world_frame = []
 all_aoa_vectors_world_frame_rotation = []
 
-SYNTHETIC_AOA = False # Just for testing that my transforms are correct.
+SYNTHETIC_AOA = True # Just for testing that my transforms are correct.
+import random
 if SYNTHETIC_AOA:
     # In a circle, we expect the AoA to always be pointing inwards, this would be along the +y axis of the rx fraeme
-    aoa_rx_frame[:] = np.array([0,1,0])
+    # aoa_rx_frame[:] = np.array([0,1,0])
+    
+    # Assume AoA vectors at 45 deg.
+    deg_from_x_axis = 75
+
+    aoa_rx_frame[:] = np.array([np.cos(np.deg2rad(deg_from_x_axis)), np.sin(np.deg2rad(deg_from_x_axis)), 0])
+    for i in range(aoa_rx_frame.shape[0]):
+        aoa_rx_frame[i,1] *= random.choice([1, -1])
+        
 
 for i in range(t_router.shape[0]):
 
     aoa_vectors_rx_frame = aoa_rx_frame[i, :] # Should be an array of N paths x 3
     n_paths = aoa_vectors_rx_frame.shape[0]
+    # for path_idx in range(n_paths):
+    #     aoa_vectors_rx_frame[path_idx, 0] *= -1
+
 
     aoa_vectors_world_frame = np.empty_like(aoa_vectors_rx_frame)
 
@@ -366,8 +389,8 @@ np.savez(
 
 # Plot results
 
-body_orientation_stride = 0
-aoa_vector_stride = 0
+body_orientation_stride = 25
+aoa_vector_stride = 25
 
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
@@ -404,14 +427,14 @@ max_strength = signal_strength[maxi, maxj] / 1e4
 
 if aoa_vector_stride > 0:
     length = 0.5
-    n_vectors = 3 # Plot first N paths
+    n_vectors = 1 # Plot first N paths
     for i in range(0, len(positions_world), aoa_vector_stride):
         for j in range(n_vectors):
             strength = signal_strength[i,j]
             origin = positions_world[i]
             tip = aoa_vectors_world[i][j,:]
             scale = (strength - min_strength)/max_strength
-            ax.quiver(*origin, *tip, color='purple', length=length*scale )
+            ax.quiver(*origin, *tip, color='purple', length=length )
 
 ax.set_xlabel("X")
 ax.set_ylabel("Y")
