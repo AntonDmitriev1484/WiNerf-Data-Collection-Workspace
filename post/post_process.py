@@ -135,12 +135,6 @@ R_cam1_to_rx = np.array([[0,0,1],
 t_rx_to_cam1_in_rx = np.array([0.1525, 0, -0.089])
 
 
-# Actually T_rx_to_cam1
-# Transforms.T_rx_to_cam1[:3, 3] = np.array([0,-0.089, -0.1525])
-# Transforms.T_rx_to_cam1[:3,:3] = np.linalg.inv(np.array([[0,0,1],
-#                                                           [-1,0,0],
-#                                                             [0,-1,0]]))
-
 Transforms.T_cam1_to_rx = np.eye(4)
 Transforms.T_cam1_to_rx[:3,:3] = R_cam1_to_rx
 Transforms.T_cam1_to_rx[:3,3]= t_rx_to_cam1_in_rx
@@ -175,24 +169,20 @@ T_world_to_cam1_talign[:3,3] = t_cam1_to_world_in_cam1
 idx = np.argmin(np.abs(slam_data[:,0] - t_align))
 print(f"{idx=}")
 
-T_sorigin_to_sbody_talign = slam_quat_to_HTM(slam_data[idx])
+T_cam1_to_sorigin_talign = slam_quat_to_HTM(slam_data[idx])
 
 # Transforms.T_world_to_sorigin =  T_world_to_cam1_talign @ np.linalg.inv(T_sorigin_to_sbody_at_t_align)
 Transforms.T_world_to_cam1_talign = T_world_to_cam1_talign
-Transforms.T_world_to_sorigin = T_sorigin_to_sbody_talign @ T_world_to_cam1_talign
+Transforms.T_world_to_sorigin = T_cam1_to_sorigin_talign @ T_world_to_cam1_talign
 
 print(f"{T_world_to_body_at_t_align=}")
-print(f"{T_sorigin_to_sbody_talign=}")
+print(f"{T_cam1_to_sorigin_talign=}")
 print(f"{Transforms.T_world_to_sorigin=}")
 
 
-# T_world_to_body = T_cam1_to_rx x T_sorigin_to_sbody x T_world_to_sorigin
-def get_T_world_to_body(T_sorigin_to_sbody): # A function because I re-use this a lot
-    T_world_to_body = (
-                    Transforms.T_cam1_to_rx
-                    @ T_sorigin_to_sbody 
-                    @ Transforms.T_world_to_sorigin 
-    )
+def get_T_world_to_body(slam_pose): # A function because I re-use this a lot
+    T_cam1_to_sorigin = slam_pose
+    T_world_to_body = Transforms.T_cam1_to_rx @ np.linalg.inv(T_cam1_to_sorigin) @ Transforms.T_world_to_sorigin
     return T_world_to_body
 
 Transforms.origin = np.eye(4)
@@ -214,42 +204,42 @@ for i in range(slam_data.shape[0]-1):
 # Compute an interpolated SLAM trajectory of the body pose in the world frame,
 # s.t. each pose is timestamp aligned to each AoA measurement.
 
-# N_POINTS = 100
-# body_poses_world_frame = [] #Poses of body in world frame, interpolated to match AoA measurements.
-# for i in range(t_router.shape[0]):
+N_POINTS = 100
+body_poses_world_frame = [] #Poses of body in world frame, interpolated to match AoA measurements.
+for i in range(t_router.shape[0]):
 
-#     # Get the closest SLAM measurements to the router timestamp
-#     tdiffs = np.abs(slam_data[:,0] - t_router[i])
-#     slam_idx1 = np.argmin(tdiffs)
-#     tdiffs[slam_idx1] = np.inf
-#     slam_idx2 = np.argmin(tdiffs)
-#     istart, iend = sorted([slam_idx1, slam_idx2]) # Make sure indices are ascending
+    # Get the closest SLAM measurements to the router timestamp
+    tdiffs = np.abs(slam_data[:,0] - t_router[i])
+    slam_idx1 = np.argmin(tdiffs)
+    tdiffs[slam_idx1] = np.inf
+    slam_idx2 = np.argmin(tdiffs)
+    istart, iend = sorted([slam_idx1, slam_idx2]) # Make sure indices are ascending
 
-#     # Make sure poses we're interpolating between are for the body in the world frame
-#     current_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[istart, :]))
-#     next_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[iend, :]))
+    # Make sure poses we're interpolating between are for the body in the world frame
+    current_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[istart, :]))
+    next_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[iend, :]))
 
-#     # Now interpolate between these two poses
-#     interp_interval = [slam_data[istart,0], slam_data[iend, 0]]
-#     interp_timestamps = np.linspace(slam_data[istart,0], slam_data[iend, 0], N_POINTS)
+    # Now interpolate between these two poses
+    interp_interval = [slam_data[istart,0], slam_data[iend, 0]]
+    interp_timestamps = np.linspace(slam_data[istart,0], slam_data[iend, 0], N_POINTS)
 
-#     # Use Slerp to interpolate on SO(3) rotations
-#     interp_rots = R.from_matrix([current_pose[:3, :3], next_pose[:3, :3]])
-#     slurpy = Slerp(interp_interval, interp_rots)
-#     interpolated_rotations = slurpy(interp_timestamps)
+    # Use Slerp to interpolate on SO(3) rotations
+    interp_rots = R.from_matrix([current_pose[:3, :3], next_pose[:3, :3]])
+    slurpy = Slerp(interp_interval, interp_rots)
+    interpolated_rotations = slurpy(interp_timestamps)
 
-#     # Use linspace to interpolate on R3 positions
-#     interpolated_positions = np.linspace(current_pose[:3, 3], next_pose[:3, 3], N_POINTS)
+    # Use linspace to interpolate on R3 positions
+    interpolated_positions = np.linspace(current_pose[:3, 3], next_pose[:3, 3], N_POINTS)
 
-#     # Get the closest interpolation timestamp to the router timestamp,
-#     # and map that interpolated pose to the measurement
-#     idx_match = np.argmin(np.abs(interp_timestamps - t_router[i]))
+    # Get the closest interpolation timestamp to the router timestamp,
+    # and map that interpolated pose to the measurement
+    idx_match = np.argmin(np.abs(interp_timestamps - t_router[i]))
 
-#     world_frame_pose = np.eye(4)
-#     world_frame_pose[:3,:3] = interpolated_rotations[idx_match].as_matrix()
-#     world_frame_pose[:3, 3] = interpolated_positions[idx_match]
+    world_frame_pose = np.eye(4)
+    world_frame_pose[:3,:3] = interpolated_rotations[idx_match].as_matrix()
+    world_frame_pose[:3, 3] = interpolated_positions[idx_match]
 
-#     body_poses_world_frame.append(world_frame_pose)
+    body_poses_world_frame.append(world_frame_pose)
 
 
 ### Now convert all AoA vectors to the world frame
@@ -339,9 +329,21 @@ np.savez(
         positions_world=positions_world
         )
 
+
+### Copy all world information: transforms, anchors, apriltags, to output
+with open(f'{outpath}/transforms.json', 'w') as fs: json.dump(vars(Transforms), fs, cls=NumpyEncoder, indent=1)
+
+
+# Run sanity check to make sure measurements are at the frequency we expect them to be before testing in the graph
+print("Checking frequency of real data")
+print(f" Measured SLAM frequency {len(slam_data) / (END-START)}")
+
+
+json.dump(args.__dict__, open(outpath+"/meta.json", 'w'), cls=NumpyEncoder, indent=1)
+
 # Plot results
 
-body_orientation_stride = 0
+body_orientation_stride = 100
 aoa_vector_stride = 0
 
 fig = plt.figure()
@@ -417,15 +419,3 @@ class NumpyEncoder(json.JSONEncoder):
             return vars(obj)
         return super().default(obj)
 
-
-
-### Copy all world information: transforms, anchors, apriltags, to output
-with open(f'{outpath}/transforms.json', 'w') as fs: json.dump(vars(Transforms), fs, cls=NumpyEncoder, indent=1)
-
-
-# Run sanity check to make sure measurements are at the frequency we expect them to be before testing in the graph
-print("Checking frequency of real data")
-print(f" Measured SLAM frequency {len(slam_data) / (END-START)}")
-
-
-json.dump(args.__dict__, open(outpath+"/meta.json", 'w'), cls=NumpyEncoder, indent=1)
