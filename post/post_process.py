@@ -86,8 +86,11 @@ csi_data = router_data['csi_matrix']
 aoa_rx_frame = router_data['aoa_matrix']
 signal_strength = router_data['strength']
 
-for i in range(len(aoa_rx_frame)-500, len(aoa_rx_frame)-1):
-    print(aoa_rx_frame[i][0,:])
+# for i in range(len(aoa_rx_frame)):
+#     for j in range(3):
+#         y = aoa_rx_frame[i, j, 1]
+#         aoa_rx_frame[i, j, 1] = aoa_rx_frame[i, j, 0]
+#         aoa_rx_frame[i, j, 0] = y
 
 all_data = []
 gt_standalone = []
@@ -132,6 +135,9 @@ t_cam1_to_rx_in_cam1 = np.array([0,-0.089, -0.1525])
 R_cam1_to_rx = np.array([[0,0,1],
                         [-1,0,0],
                         [0,-1,0]])
+# R_cam1_to_rx = np.array([[0,0,1],
+#                         [1,0,0],
+#                         [0,-1,0]])
 t_rx_to_cam1_in_rx = np.array([0.1525, 0, -0.089])
 
 
@@ -244,58 +250,59 @@ for i in range(t_router.shape[0]):
 
 ### Now convert all AoA vectors to the world frame
 
-# all_aoa_vectors_world_frame = []
-# all_aoa_vectors_world_frame_rotation = []
+all_aoa_vectors_world_frame = []
+all_aoa_vectors_world_frame_rotation = []
 
-# #
+#
 
-# SYNTHETIC_AOA = True # Just for testing that my transforms are correct.
-# import random
-# if SYNTHETIC_AOA:
-#     # In a circle, we expect the AoA to always be pointing inwards, this would be along the +y axis of the rx fraeme
-#     # aoa_rx_frame[:] = np.array([0,1,0])
+SYNTHETIC_AOA = False # Just for testing that my transforms are correct.
+import random
+if SYNTHETIC_AOA:
+    # In a circle, we expect the AoA to always be pointing inwards, this would be along the +y axis of the rx fraeme
+    aoa_rx_frame[:] = np.array([1,0,0])
     
-#     # Assume AoA vectors at 45 deg.
-#     deg_from_x_axis = 75
+    # Assume AoA vectors at 45 deg.
+    # deg_from_x_axis = 75
+    # # # Are we positivee, or negative 75 deg from the x-axis?
 
-#     aoa_rx_frame[:] = np.array([np.cos(np.deg2rad(deg_from_x_axis)), np.sin(np.deg2rad(deg_from_x_axis)), 0])
-#     for i in range(aoa_rx_frame.shape[0]):
-#         aoa_rx_frame[i,1] *= random.choice([1, -1])
-        
-
-# for i in range(t_router.shape[0]):
-
-#     aoa_vectors_rx_frame = aoa_rx_frame[i, :] # Should be an array of N paths x 3
-#     n_paths = aoa_vectors_rx_frame.shape[0]
-#     # for path_idx in range(n_paths):
-#     #     aoa_vectors_rx_frame[path_idx, 0] *= -1
+    # aoa_rx_frame[:] = np.array([np.cos(np.deg2rad(deg_from_x_axis)), np.sin(np.deg2rad(deg_from_x_axis)), 0])
+    # for i in range(aoa_rx_frame.shape[0]):
+    #     for j in range(3):
+    #         aoa_rx_frame[i,j,1] *= random.choice([1, -1])
 
 
-#     aoa_vectors_world_frame = np.empty_like(aoa_vectors_rx_frame)
+for i in range(t_router.shape[0]):
 
-#     # Using the known pose of the body in the world frame, at time t
-#     # Map each path at time t into the world frame.
-#     T_rx_to_world = np.linalg.inv(body_poses_world_frame[i])
+    aoa_vectors_rx_frame = aoa_rx_frame[i, :] # Should be an array of N paths x 3
+    n_paths = aoa_vectors_rx_frame.shape[0]
 
-#     # This computation takes the 'tip' of the AoA unit vector in rx frame coordinates
-#     # And maps it to the 'tip' of the AoA unit vector in world frame coordinates.
-#     # This means that this will return points w.r.t world origin, and not w.r.t rx frame origin in world frame.
-#     for path_idx in range(n_paths):
-#         aoa_vectors_world_frame[path_idx,:] = (T_rx_to_world @ np.append(aoa_vectors_rx_frame[path_idx, :], 1))[:3]
-#     all_aoa_vectors_world_frame.append(aoa_vectors_world_frame)
 
-#     # This computation rotates the AoA unit vector from rx frame coordinates into world frame coordinates.
-#     # This means that the tip of this unit vector will be w.r.t 0,0,0, but its rotation will be
-#     # consistent with the world axes.
-#     aoa_vectors_world_frame_rotation = np.empty_like(aoa_vectors_rx_frame)
-#     for path_idx in range(n_paths):
-#         v_rx = aoa_vectors_rx_frame[path_idx, :]
-#         v_world = np.linalg.inv(T_rx_to_world[:3,:3]) @ aoa_vectors_rx_frame[path_idx, :]
-#         aoa_vectors_world_frame_rotation[path_idx, :] = np.linalg.inv(T_rx_to_world[:3,:3]) @ aoa_vectors_rx_frame[path_idx, :]
-#         # Pretty sure these are unit vectors, so its the plotting that must be wrong.
+    aoa_vectors_world_frame = np.empty_like(aoa_vectors_rx_frame)
 
-#     all_aoa_vectors_world_frame_rotation.append(aoa_vectors_world_frame_rotation)
-#     # These will provide the RPY of the vector along world frame axes, as measured at the receiver's origin.
+    # Using the known pose of the body in the world frame, at time t
+    # Map each path at time t into the world frame.
+
+    T_world_to_rx = body_poses_world_frame[i]
+    T_rx_to_world = np.linalg.inv(T_world_to_rx)
+
+    # This computation takes the 'tip' of the AoA unit vector in rx frame coordinates
+    # And maps it to the 'tip' of the AoA unit vector in world frame coordinates.
+    # This means that this will return points w.r.t world origin, and not w.r.t rx frame origin in world frame.
+    for path_idx in range(n_paths):
+        aoa_vectors_world_frame[path_idx,:] = (T_rx_to_world @ np.append(aoa_vectors_rx_frame[path_idx, :], 1))[:3]
+    all_aoa_vectors_world_frame.append(aoa_vectors_world_frame)
+
+    # This computation rotates the AoA unit vector from rx frame coordinates into world frame coordinates.
+    # This means that the tip of this unit vector will be w.r.t 0,0,0, but its rotation will be
+    # consistent with the world axes.
+    aoa_vectors_world_frame_rotation = np.empty_like(aoa_vectors_rx_frame)
+    for path_idx in range(n_paths):
+        v_rx = aoa_vectors_rx_frame[path_idx, :]
+        v_world = T_rx_to_world[:3,:3] @ aoa_vectors_rx_frame[path_idx, :]
+        aoa_vectors_world_frame_rotation[path_idx, :] = T_rx_to_world[:3,:3] @ aoa_vectors_rx_frame[path_idx, :]
+
+    all_aoa_vectors_world_frame_rotation.append(aoa_vectors_world_frame_rotation)
+    # These will provide the RPY of the vector along world frame axes, as measured at the receiver's origin.
 
 valid_timestamp_idx = list(np.where((t_router > args.crop_start) & (t_router < END))[0])
 
@@ -303,20 +310,18 @@ valid_timestamp_idx = list(np.where((t_router > args.crop_start) & (t_router < E
 positions_world = []
 aoa_vectors_world = []
 
-for body_pose in body_poses_world_frame:
-    H = np.linalg.inv(body_pose)
-    positions_world.append(H[:3,3].flatten())
 
-# i=0
-# for body_pose, aoa_vector in zip(body_poses_world_frame, all_aoa_vectors_world_frame_rotation):
-#     # if i in valid_timestamp_idx:
-#     #     H = np.linalg.inv(body_pose)
-#     #     positions_world.append(H[:3,3].flatten())
-#     #     aoa_vectors_world.append(aoa_vector)
-#     H = np.linalg.inv(body_pose)
-#     positions_world.append(H[:3,3].flatten())
-#     aoa_vectors_world.append(aoa_vector)
-#     i+=1
+i=0
+
+body_poses_world_frame_ = []
+for body_pose, aoa_vector in zip(body_poses_world_frame, all_aoa_vectors_world_frame_rotation):
+    if i in valid_timestamp_idx:
+        H = np.linalg.inv(body_pose)
+        positions_world.append(H[:3,3].flatten())
+        aoa_vectors_world.append(aoa_vector)
+        body_poses_world_frame_.append(body_pose)
+    i+=1
+body_poses_world_frame = body_poses_world_frame_
 
 print(positions_world[:5])
 np.savez(
@@ -337,14 +342,15 @@ with open(f'{outpath}/transforms.json', 'w') as fs: json.dump(vars(Transforms), 
 # Run sanity check to make sure measurements are at the frequency we expect them to be before testing in the graph
 print("Checking frequency of real data")
 print(f" Measured SLAM frequency {len(slam_data) / (END-START)}")
+print(f" Measured CSI frequency {t_router.shape[0] / (t_router[-1]-t_router[0])}")
 
 
 json.dump(args.__dict__, open(outpath+"/meta.json", 'w'), cls=NumpyEncoder, indent=1)
 
 # Plot results
 
-body_orientation_stride = 100
-aoa_vector_stride = 0
+body_orientation_stride = 50
+aoa_vector_stride = 10
 
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
@@ -366,8 +372,6 @@ def draw_axes(ax, T, length=0.1):
     x_axis = (H @ np.array([1,0,0,1]))[:3]
     y_axis = (H @ np.array([0,1,0,1]))[:3]
     z_axis = (H @ np.array([0,0,1,1]))[:3]
-
-    print(f"{origin=}")
 
     ax.quiver(*origin, *(x_axis-origin) * length, color='r')
     ax.quiver(*origin, *(y_axis-origin) * length, color='g')
