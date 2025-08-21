@@ -28,7 +28,8 @@ from utils.load_pix4dcatch import *
 
 
 import matplotlib.pyplot as plt
-# matplotlib.use('Agg')
+matplotlib.use('TkAgg')
+
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import pickle
 # Example usage:
@@ -88,13 +89,6 @@ signal_strength = router_data['strength']
 for i in range(len(aoa_rx_frame)-500, len(aoa_rx_frame)-1):
     print(aoa_rx_frame[i][0,:])
 
-closer_to_x_count = 0
-for vs in aoa_rx_frame:
-    for i in range(vs.shape[0]):
-        closer_to_x = np.dot(vs[i,:], np.array([1,0,0])) < 0.7071
-        if closer_to_x: closer_to_x_count += 1
-print(f"Percent of vectors that are closer to +x than + or -y axis: {closer_to_x_count / (len(aoa_rx_frame)*3)}")
-
 all_data = []
 gt_standalone = []
 
@@ -133,15 +127,23 @@ Transforms = SimpleNamespace()
 
 
 Transforms.T_cam1_to_rx = np.eye(4)
-Transforms.T_cam1_to_rx[:3, 3] = np.array([0,-0.089, -0.1525])
-Transforms.T_cam1_to_rx[:3,:3] = np.linalg.inv(np.array([[0,0,1],
-                                                          [-1,0,0],
-                                                            [0,-1,0]]))
 
-# Transforms.T_cam1_to_rx[:3,:3] = np.linalg.inv(np.array([[0,0,1],
-#                                                         [1,0,0],
-#                                                         [0,-1,0]]))
+t_cam1_to_rx_in_cam1 = np.array([0,-0.089, -0.1525])
+R_cam1_to_rx = np.array([[0,0,1],
+                        [-1,0,0],
+                        [0,-1,0]])
+t_rx_to_cam1_in_rx = np.array([0.1525, 0, -0.089])
 
+
+# Actually T_rx_to_cam1
+# Transforms.T_rx_to_cam1[:3, 3] = np.array([0,-0.089, -0.1525])
+# Transforms.T_rx_to_cam1[:3,:3] = np.linalg.inv(np.array([[0,0,1],
+#                                                           [-1,0,0],
+#                                                             [0,-1,0]]))
+
+Transforms.T_cam1_to_rx = np.eye(4)
+Transforms.T_cam1_to_rx[:3,:3] = R_cam1_to_rx
+Transforms.T_cam1_to_rx[:3,3]= t_rx_to_cam1_in_rx
 
 # Transforms.T_cam1_to_rx[:3,:3] = np.array([[0,0,1], [-1,0,0], [0,-1,0]])
 Transforms.T_body_to_cam1 = np.linalg.inv(Transforms.T_cam1_to_rx)
@@ -154,115 +156,56 @@ if args.override_april_start is None:
     print(" Sorry :(")
     exit()
 
-# Compute initial pose estimate using optimizer.
-# Super hacky solution. Basically just forces trajectory to be in XY plane at a Z level with the origin.
-# We can do this because it's a roomba moving on flat ground.
-T_prior = np.eye(4)
-R_prior = np.array([[1, 0 ,0 ],
-                    [0, 0, 1],
-                    [0, -1, 0]], dtype=np.float64)
-if args.use_arkit:
-    R_prior = np.array([0,0,-1], [0,1,0], [1,0,0], dtype= np.float64)
-T_prior[:3,:3] = R_prior
-T_prior[:3,3] = np.array(json.loads(args.override_april_start))
-Transforms.T_world_to_sorigin = np.eye(4)
-Transforms.T_world_to_sorigin[:3, 3] = np.array(json.loads(args.override_april_start))
-Transforms.T_world_to_sorigin[:3,:3] = R_prior
-best_Z = Transforms.T_world_to_sorigin[2,3]
 
 t_align = args.crop_start -1
 T_world_to_body_at_t_align = np.eye(4)
-T_world_to_body_at_t_align[:3, 3] = np.array([0.75, 3, 0.2535])
-T_world_to_body_at_t_align[:3,:3] = R_prior
+cam1_z = 0.2535
+
+t_cam1_to_world_in_cam1 = np.array([-0.75, 0.2535, -3])
+R_world_to_cam1 = np.array([[1,0,0], [0,0,-1], [0,1,0]])
+
+T_world_to_cam1_talign = np.eye(4)
+T_world_to_cam1_talign[:3,:3] = R_world_to_cam1
+T_world_to_cam1_talign[:3,3] = t_cam1_to_world_in_cam1
+
+# T_world_to_body_at_t_align[:3, 3] = np.array([0.75, 3, cam1_z])
+# T_world_to_body_at_t_align[:3,:3] = R_prior
 
 # Fetch the closest SLAM pose to our crop start
 idx = np.argmin(np.abs(slam_data[:,0] - t_align))
 print(f"{idx=}")
 
-T_sorigin_to_sbody_at_t_align = slam_quat_to_HTM(slam_data[idx])
+T_sorigin_to_sbody_talign = slam_quat_to_HTM(slam_data[idx])
 
-
-
-Transforms.T_world_to_sorigin =  T_world_to_body_at_t_align @ np.linalg.inv(T_sorigin_to_sbody_at_t_align)
+# Transforms.T_world_to_sorigin =  T_world_to_cam1_talign @ np.linalg.inv(T_sorigin_to_sbody_at_t_align)
+Transforms.T_world_to_cam1_talign = T_world_to_cam1_talign
+Transforms.T_world_to_sorigin = T_sorigin_to_sbody_talign @ T_world_to_cam1_talign
 
 print(f"{T_world_to_body_at_t_align=}")
-print(f"{T_sorigin_to_sbody_at_t_align=}")
+print(f"{T_sorigin_to_sbody_talign=}")
 print(f"{Transforms.T_world_to_sorigin=}")
-# def rotate_about_world_x(T, theta):
-#     # Rotate to world frame, then rotate by the adjustment along world frame x axis.
-#     R_about_world_x = np.array([[1, 0, 0, 0], 
-#                                 [0, np.cos(theta), -np.sin(theta), 0],
-#                                 [0, np.sin(theta), np.cos(theta), 0],
-#                                 [0,0,0,1]], dtype=np.float64)
-#     T_ = T.copy()
-#     T_ =  R_about_world_x @ T
-#     return T_
-
-# def minimize_for_world_pose(slam_data, best_Z, T_world_to_sorigin, Transforms):
-
-
-#     def get_T_world_to_body(T_sorigin_to_sbody): # A function because I re-use this a lot
-#         T_world_to_body = (
-#                         Transforms.T_world_to_sorigin 
-#                         @ T_sorigin_to_sbody 
-#                         @ Transforms.T_cam1_to_rx
-#         )
-#         return T_world_to_body
-
-#     body_poses_world_frame = []
-#     zs = []
-#     for i in range(slam_data.shape[0]-1):
-
-#         T_sorigin_to_sbody = slam_quat_to_HTM(slam_data[i,:])
-#         T_world_to_body = get_T_world_to_body(T_sorigin_to_sbody)
-#         body_poses_world_frame.append( T_world_to_body )
-#         zs.append(T_world_to_body[2,3])
-
-#     # The best (lowest) score has the lowest total error in each poses Z-coordinate
-#     # score = sum([ abs( best_Z - T_world_to_body[2,3]) ** 2 for T_world_to_body in body_poses_world_frame])
-#     score = np.var(np.abs(np.array(zs)-best_Z))
-
-#     return score
-
-# def distance_to_XY_plane_loss(theta):
-#     print(f" Trying theta: {theta * 180/np.pi}")
-
-#     T_world_to_sorigin = np.eye(4)
-#     T_world_to_sorigin[:3,:3] = R_prior # Im pretty sure this is the right order for python
-#     T_world_to_sorigin[:3,3] = Transforms.T_world_to_sorigin[:3, 3]
-
-#     T_world_to_sorigin = rotate_about_world_x(T_world_to_sorigin, float(theta[0]))
-
-#     # Make sure you deep copy slam data every time
-#     score = minimize_for_world_pose(slam_data.copy(), best_Z, T_world_to_sorigin, Transforms)
-#     print(f" Score {score}")
-#     return score
-
-# INITIAL_THETA = np.array([0]) # Initial guess on theta is 0 rad
-# result = minimize(distance_to_XY_plane_loss, INITIAL_THETA, method = 'Nelder-Mead')
-# result_theta = result.x[0] # Result has a bizzare projection instead of rotation effect when included in pose chain?
-# # Didn't really have time to debug this.
-# print(f" Selected Theta: {result.x[0] * 180/np.pi}")
-# print("Final loss:", result.fun)
-# print(f" Initial Rotation {R_prior}")
-# Transforms.T_world_to_sorigin = rotate_about_world_x(T_prior, result_theta)
-# print(f" Final rotation { Transforms.T_world_to_sorigin[:3, :3]}")
 
 
 # T_world_to_body = T_cam1_to_rx x T_sorigin_to_sbody x T_world_to_sorigin
 def get_T_world_to_body(T_sorigin_to_sbody): # A function because I re-use this a lot
     T_world_to_body = (
-                    Transforms.T_world_to_sorigin 
+                    Transforms.T_cam1_to_rx
                     @ T_sorigin_to_sbody 
-                    @ Transforms.T_cam1_to_rx
+                    @ Transforms.T_world_to_sorigin 
     )
     return T_world_to_body
+
+Transforms.origin = np.eye(4)
 
 ### Write SLAM camera trajectory
 slam_poses_slam_frame = [] # This is a list of T_sorigin_to_sbody
 slam_pose_counter = 0
+
+body_poses_world_frame = []
+
 for i in range(slam_data.shape[0]-1):
     T_sorigin_to_sbody = slam_quat_to_HTM(slam_data[i,:])
+    body_poses_world_frame.append(get_T_world_to_body(T_sorigin_to_sbody))
     slam_poses_slam_frame.append( [slam_data[i,0]] + list(T_sorigin_to_sbody.flatten()) )
     slam_pose_counter += 1
 
@@ -271,99 +214,98 @@ for i in range(slam_data.shape[0]-1):
 # Compute an interpolated SLAM trajectory of the body pose in the world frame,
 # s.t. each pose is timestamp aligned to each AoA measurement.
 
-N_POINTS = 100
+# N_POINTS = 100
+# body_poses_world_frame = [] #Poses of body in world frame, interpolated to match AoA measurements.
+# for i in range(t_router.shape[0]):
 
-body_poses_world_frame = [] #Poses of body in world frame, interpolated to match AoA measurements.
-for i in range(t_router.shape[0]):
+#     # Get the closest SLAM measurements to the router timestamp
+#     tdiffs = np.abs(slam_data[:,0] - t_router[i])
+#     slam_idx1 = np.argmin(tdiffs)
+#     tdiffs[slam_idx1] = np.inf
+#     slam_idx2 = np.argmin(tdiffs)
+#     istart, iend = sorted([slam_idx1, slam_idx2]) # Make sure indices are ascending
 
-    # Get the closest SLAM measurements to the router timestamp
-    tdiffs = np.abs(slam_data[:,0] - t_router[i])
-    slam_idx1 = np.argmin(tdiffs)
-    tdiffs[slam_idx1] = np.inf
-    slam_idx2 = np.argmin(tdiffs)
-    istart, iend = sorted([slam_idx1, slam_idx2]) # Make sure indices are ascending
+#     # Make sure poses we're interpolating between are for the body in the world frame
+#     current_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[istart, :]))
+#     next_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[iend, :]))
 
-    # Make sure poses we're interpolating between are for the body in the world frame
-    current_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[istart, :]))
-    next_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[iend, :]))
+#     # Now interpolate between these two poses
+#     interp_interval = [slam_data[istart,0], slam_data[iend, 0]]
+#     interp_timestamps = np.linspace(slam_data[istart,0], slam_data[iend, 0], N_POINTS)
 
-    # Now interpolate between these two poses
-    interp_interval = [slam_data[istart,0], slam_data[iend, 0]]
-    interp_timestamps = np.linspace(slam_data[istart,0], slam_data[iend, 0], N_POINTS)
+#     # Use Slerp to interpolate on SO(3) rotations
+#     interp_rots = R.from_matrix([current_pose[:3, :3], next_pose[:3, :3]])
+#     slurpy = Slerp(interp_interval, interp_rots)
+#     interpolated_rotations = slurpy(interp_timestamps)
 
-    # Use Slerp to interpolate on SO(3) rotations
-    interp_rots = R.from_matrix([current_pose[:3, :3], next_pose[:3, :3]])
-    slurpy = Slerp(interp_interval, interp_rots)
-    interpolated_rotations = slurpy(interp_timestamps)
+#     # Use linspace to interpolate on R3 positions
+#     interpolated_positions = np.linspace(current_pose[:3, 3], next_pose[:3, 3], N_POINTS)
 
-    # Use linspace to interpolate on R3 positions
-    interpolated_positions = np.linspace(current_pose[:3, 3], next_pose[:3, 3], N_POINTS)
+#     # Get the closest interpolation timestamp to the router timestamp,
+#     # and map that interpolated pose to the measurement
+#     idx_match = np.argmin(np.abs(interp_timestamps - t_router[i]))
 
-    # Get the closest interpolation timestamp to the router timestamp,
-    # and map that interpolated pose to the measurement
-    idx_match = np.argmin(np.abs(interp_timestamps - t_router[i]))
+#     world_frame_pose = np.eye(4)
+#     world_frame_pose[:3,:3] = interpolated_rotations[idx_match].as_matrix()
+#     world_frame_pose[:3, 3] = interpolated_positions[idx_match]
 
-    world_frame_pose = np.eye(4)
-    world_frame_pose[:3,:3] = interpolated_rotations[idx_match].as_matrix()
-    world_frame_pose[:3, 3] = interpolated_positions[idx_match]
-
-    body_poses_world_frame.append(world_frame_pose)
+#     body_poses_world_frame.append(world_frame_pose)
 
 
 ### Now convert all AoA vectors to the world frame
 
-all_aoa_vectors_world_frame = []
-all_aoa_vectors_world_frame_rotation = []
+# all_aoa_vectors_world_frame = []
+# all_aoa_vectors_world_frame_rotation = []
 
-#
+# #
 
-SYNTHETIC_AOA = True # Just for testing that my transforms are correct.
-import random
-if SYNTHETIC_AOA:
-    # In a circle, we expect the AoA to always be pointing inwards, this would be along the +y axis of the rx fraeme
-    # aoa_rx_frame[:] = np.array([0,1,0])
+# SYNTHETIC_AOA = True # Just for testing that my transforms are correct.
+# import random
+# if SYNTHETIC_AOA:
+#     # In a circle, we expect the AoA to always be pointing inwards, this would be along the +y axis of the rx fraeme
+#     # aoa_rx_frame[:] = np.array([0,1,0])
     
-    # Assume AoA vectors at 45 deg.
-    deg_from_x_axis = 75
+#     # Assume AoA vectors at 45 deg.
+#     deg_from_x_axis = 75
 
-    aoa_rx_frame[:] = np.array([np.cos(np.deg2rad(deg_from_x_axis)), np.sin(np.deg2rad(deg_from_x_axis)), 0])
-    for i in range(aoa_rx_frame.shape[0]):
-        aoa_rx_frame[i,1] *= random.choice([1, -1])
+#     aoa_rx_frame[:] = np.array([np.cos(np.deg2rad(deg_from_x_axis)), np.sin(np.deg2rad(deg_from_x_axis)), 0])
+#     for i in range(aoa_rx_frame.shape[0]):
+#         aoa_rx_frame[i,1] *= random.choice([1, -1])
         
 
-for i in range(t_router.shape[0]):
+# for i in range(t_router.shape[0]):
 
-    aoa_vectors_rx_frame = aoa_rx_frame[i, :] # Should be an array of N paths x 3
-    n_paths = aoa_vectors_rx_frame.shape[0]
-    # for path_idx in range(n_paths):
-    #     aoa_vectors_rx_frame[path_idx, 0] *= -1
+#     aoa_vectors_rx_frame = aoa_rx_frame[i, :] # Should be an array of N paths x 3
+#     n_paths = aoa_vectors_rx_frame.shape[0]
+#     # for path_idx in range(n_paths):
+#     #     aoa_vectors_rx_frame[path_idx, 0] *= -1
 
 
-    aoa_vectors_world_frame = np.empty_like(aoa_vectors_rx_frame)
+#     aoa_vectors_world_frame = np.empty_like(aoa_vectors_rx_frame)
 
-    # Using the known pose of the body in the world frame, at time t
-    # Map each path at time t into the world frame.
-    T_rx_to_world = np.linalg.inv(body_poses_world_frame[i])
+#     # Using the known pose of the body in the world frame, at time t
+#     # Map each path at time t into the world frame.
+#     T_rx_to_world = np.linalg.inv(body_poses_world_frame[i])
 
-    # This computation takes the 'tip' of the AoA unit vector in rx frame coordinates
-    # And maps it to the 'tip' of the AoA unit vector in world frame coordinates.
-    # This means that this will return points w.r.t world origin, and not w.r.t rx frame origin in world frame.
-    for path_idx in range(n_paths):
-        aoa_vectors_world_frame[path_idx,:] = (T_rx_to_world @ np.append(aoa_vectors_rx_frame[path_idx, :], 1))[:3]
-    all_aoa_vectors_world_frame.append(aoa_vectors_world_frame)
+#     # This computation takes the 'tip' of the AoA unit vector in rx frame coordinates
+#     # And maps it to the 'tip' of the AoA unit vector in world frame coordinates.
+#     # This means that this will return points w.r.t world origin, and not w.r.t rx frame origin in world frame.
+#     for path_idx in range(n_paths):
+#         aoa_vectors_world_frame[path_idx,:] = (T_rx_to_world @ np.append(aoa_vectors_rx_frame[path_idx, :], 1))[:3]
+#     all_aoa_vectors_world_frame.append(aoa_vectors_world_frame)
 
-    # This computation rotates the AoA unit vector from rx frame coordinates into world frame coordinates.
-    # This means that the tip of this unit vector will be w.r.t 0,0,0, but its rotation will be
-    # consistent with the world axes.
-    aoa_vectors_world_frame_rotation = np.empty_like(aoa_vectors_rx_frame)
-    for path_idx in range(n_paths):
-        v_rx = aoa_vectors_rx_frame[path_idx, :]
-        v_world = np.linalg.inv(T_rx_to_world[:3,:3]) @ aoa_vectors_rx_frame[path_idx, :]
-        aoa_vectors_world_frame_rotation[path_idx, :] = np.linalg.inv(T_rx_to_world[:3,:3]) @ aoa_vectors_rx_frame[path_idx, :]
-        # Pretty sure these are unit vectors, so its the plotting that must be wrong.
+#     # This computation rotates the AoA unit vector from rx frame coordinates into world frame coordinates.
+#     # This means that the tip of this unit vector will be w.r.t 0,0,0, but its rotation will be
+#     # consistent with the world axes.
+#     aoa_vectors_world_frame_rotation = np.empty_like(aoa_vectors_rx_frame)
+#     for path_idx in range(n_paths):
+#         v_rx = aoa_vectors_rx_frame[path_idx, :]
+#         v_world = np.linalg.inv(T_rx_to_world[:3,:3]) @ aoa_vectors_rx_frame[path_idx, :]
+#         aoa_vectors_world_frame_rotation[path_idx, :] = np.linalg.inv(T_rx_to_world[:3,:3]) @ aoa_vectors_rx_frame[path_idx, :]
+#         # Pretty sure these are unit vectors, so its the plotting that must be wrong.
 
-    all_aoa_vectors_world_frame_rotation.append(aoa_vectors_world_frame_rotation)
-    # These will provide the RPY of the vector along world frame axes, as measured at the receiver's origin.
+#     all_aoa_vectors_world_frame_rotation.append(aoa_vectors_world_frame_rotation)
+#     # These will provide the RPY of the vector along world frame axes, as measured at the receiver's origin.
 
 valid_timestamp_idx = list(np.where((t_router > args.crop_start) & (t_router < END))[0])
 
@@ -371,12 +313,20 @@ valid_timestamp_idx = list(np.where((t_router > args.crop_start) & (t_router < E
 positions_world = []
 aoa_vectors_world = []
 
-i=0
-for body_pose, aoa_vector in zip(body_poses_world_frame, all_aoa_vectors_world_frame_rotation):
-    if i in valid_timestamp_idx:
-        positions_world.append(body_pose[:3,3].flatten())
-        aoa_vectors_world.append(aoa_vector)
-    i+=1
+for body_pose in body_poses_world_frame:
+    H = np.linalg.inv(body_pose)
+    positions_world.append(H[:3,3].flatten())
+
+# i=0
+# for body_pose, aoa_vector in zip(body_poses_world_frame, all_aoa_vectors_world_frame_rotation):
+#     # if i in valid_timestamp_idx:
+#     #     H = np.linalg.inv(body_pose)
+#     #     positions_world.append(H[:3,3].flatten())
+#     #     aoa_vectors_world.append(aoa_vector)
+#     H = np.linalg.inv(body_pose)
+#     positions_world.append(H[:3,3].flatten())
+#     aoa_vectors_world.append(aoa_vector)
+#     i+=1
 
 print(positions_world[:5])
 np.savez(
@@ -391,8 +341,8 @@ np.savez(
 
 # Plot results
 
-body_orientation_stride = 25
-aoa_vector_stride = 25
+body_orientation_stride = 0
+aoa_vector_stride = 0
 
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
@@ -408,14 +358,19 @@ ax.scatter(*tx_loc, color = 'purple', s=0.5)
 
 def draw_axes(ax, T, length=0.1):
     """Draw coordinate axes from transformation matrix T."""
-    origin = T[:3, 3]
-    x_axis = T[:3, 0] * length
-    y_axis = T[:3, 1] * length
-    z_axis = T[:3, 2] * length
 
-    ax.quiver(*origin, *x_axis, color='r', length=length, normalize=False)
-    ax.quiver(*origin, *y_axis, color='g', length=length, normalize=False)
-    ax.quiver(*origin, *z_axis, color='b', length=length, normalize=False)
+    H = np.linalg.inv(T)
+    origin = (H @ np.array([0,0,0,1]))[:3]
+    x_axis = (H @ np.array([1,0,0,1]))[:3]
+    y_axis = (H @ np.array([0,1,0,1]))[:3]
+    z_axis = (H @ np.array([0,0,1,1]))[:3]
+
+    print(f"{origin=}")
+
+    ax.quiver(*origin, *(x_axis-origin) * length, color='r')
+    ax.quiver(*origin, *(y_axis-origin) * length, color='g')
+    ax.quiver(*origin, *(z_axis-origin) * length, color='b')
+
 
 if body_orientation_stride > 0:
     for i in range(0, len(body_poses_world_frame), body_orientation_stride):
