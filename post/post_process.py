@@ -315,6 +315,8 @@ for i in range(t_router.shape[0]):
 all_aoa_vectors_world_frame = []
 all_aoa_vectors_world_frame_rotation = []
 
+#
+
 SYNTHETIC_AOA = True # Just for testing that my transforms are correct.
 import random
 if SYNTHETIC_AOA:
