@@ -223,7 +223,8 @@ def extract_apriltag_pose(slam_data, infra1_raw_frames, Transforms, in_kalibr, i
     # How you would write it by hand (doesn't work)
     # T_world_to_sorigin = np.linalg.inv(T_sorigin_to_sbody) @ np.linalg.inv(T_cam1_to_tag) @ T_world_to_tag
     T_world_to_sorigin = (
-        T_world_to_tag
+        Transforms.T_adjust_in_world
+        @ T_world_to_tag
         @ np.linalg.inv(T_cam1_to_tag)
         @ np.linalg.inv(T_sorigin_to_sbody)
     )

@@ -42,6 +42,8 @@ parser.add_argument("--trial_name" , "-t", type=str)
 parser.add_argument("--cam_calibration_file", "-c", type=str)
 parser.add_argument("--crop_start", type=float) # From now on this will be relative time from start of recording instead of an absolute timestamp
 parser.add_argument("--override_april_start", type=str )
+parser.add_argument("--start_position_cam", type=str ) # start position of world origin in cam1 frame, at alignment point.
+parser.add_argument("--z_rot_adjust_deg", default=0, type=float)
 parser.add_argument("--use_arkit", default=False, type=bool)
 parser.add_argument("--in_tx_location", type=str )
 parser.add_argument("--plot_world", default=False, type=bool) # Generate a plot of router positions and aoa vectors in world frame when done?
@@ -151,18 +153,31 @@ Transforms.T_body_to_cam1 = np.linalg.inv(Transforms.T_cam1_to_rx)
 # Transforms = extract_apriltag_pose(slam_data, infra1_raw_frames, Transforms, in_kalibr, in_apriltags)
 # Transforms = extract_apriltag_pose_PnP(slam_data, infra1_raw_frames, Transforms, in_kalibr, in_apriltags)
 
-if args.override_april_start is None:
+if args.start_position_world is None:
     print(" Need to set manual starting point for this dataset collection!")
     print(" Sorry :(")
     exit()
 
-
-t_align = args.crop_start -1
+t_align = args.crop_start -1 # Assume alignment point is the same as what we want to set
 T_world_to_body_at_t_align = np.eye(4)
 cam1_z = 0.2535
 
-t_cam1_to_world_in_cam1 = np.array([-0.75, 0.2535, -3])
-R_world_to_cam1 = np.array([[1,0,0], [0,0,-1], [0,1,0]])
+#
+t_cam1_to_world_in_cam1 = np.array(json.loads(args.start_position_cam))
+
+# Assume camera frame Z is always aligned with world Y
+R_world_to_cam1 = np.array([[1,0,0], 
+                            [0,0,-1], 
+                            [0,1,0]])
+
+# Sometimes you need to apply a manual rotation about the Z-axis so that the trajectory can work properly.
+Transforms.T_adjust_in_world = np.eye(4)
+if args.z_rot_adjust_deg != 0.0:
+    theta = np.deg2rad(args.z_rot_adjust_deg)
+    Transforms.T_adjust_in_world[:3,:3] = np.array(
+        [[np.cos(theta), -np.sin(theta), 0],
+        [np.sin(theta), np.cos(theta), 0],
+        [0, 0, 1]])
 
 T_world_to_cam1_talign = np.eye(4)
 T_world_to_cam1_talign[:3,:3] = R_world_to_cam1
