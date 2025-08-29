@@ -88,14 +88,14 @@ csi_data = router_data['csi_matrix']
 aoa_rx_frame = router_data['aoa_matrix']
 signal_strength = router_data['strength']
 
-# if args.trial_name == "winerf_trial1": # Split into two trials, so just concatenate the wireless trial of the first to second.
-#     in_router_data = f'../router/{args.trial_name}_1.npz'
-#     router_append = np.load(in_router_data)
-
-#     t_router += router_append['timestamps']
-#     csi_data += router_append['csi_matrix']
-#     aoa_rx_frame += router_append['aoa_matrix']
-#     signal_strength += router_data['strength']
+if args.trial_name == "winerf_trial1": # Split into two trials, so just concatenate the wireless trial of the first to second.
+    in_router_data = f'../router/{args.trial_name}_1.npz'
+    router_append = np.load(in_router_data)
+    print(type(t_router))
+    t_router = np.concatenate([t_router, router_append['timestamps']])
+    csi_data = np.concatenate([csi_data, router_append['csi_matrix']])
+    aoa_rx_frame = np.concatenate([aoa_rx_frame, router_append['aoa_matrix']])
+    signal_strength = np.concatenate([signal_strength, router_data['strength']])
 
 # for i in range(len(aoa_rx_frame)):
 #     for j in range(3):
