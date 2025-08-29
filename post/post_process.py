@@ -88,6 +88,15 @@ csi_data = router_data['csi_matrix']
 aoa_rx_frame = router_data['aoa_matrix']
 signal_strength = router_data['strength']
 
+# if args.trial_name == "winerf_trial1": # Split into two trials, so just concatenate the wireless trial of the first to second.
+#     in_router_data = f'../router/{args.trial_name}_1.npz'
+#     router_append = np.load(in_router_data)
+
+#     t_router += router_append['timestamps']
+#     csi_data += router_append['csi_matrix']
+#     aoa_rx_frame += router_append['aoa_matrix']
+#     signal_strength += router_data['strength']
+
 # for i in range(len(aoa_rx_frame)):
 #     for j in range(3):
 #         y = aoa_rx_frame[i, j, 1]
@@ -354,8 +363,8 @@ for i in range(t_router.shape[0]):
     for path_idx in range(n_paths):
         v_rx = aoa_vectors_rx_frame[path_idx, :]
         v_world = T_rx_to_world[:3,:3] @ aoa_vectors_rx_frame[path_idx, :]
-        aoa_vectors_world_frame_rotation[path_idx, :] = T_rx_to_world[:3,:3] @ np.array([[1,0,0],[0,-1,0],[0,0,1]]) @ aoa_vectors_rx_frame[path_idx, :]
-        aoa_vectors_world_frame_rotation_reflected[path_idx, :] = T_rx_to_world[:3,:3] @ np.array([[-1,0,0],[0,-1,0],[0,0,1]]) @ aoa_vectors_rx_frame[path_idx, :]
+        aoa_vectors_world_frame_rotation[path_idx, :] = T_rx_to_world[:3,:3] @ np.array([[1,0,0],[0,1,0],[0,0,1]]) @ (-1 * aoa_vectors_rx_frame[path_idx, :])
+        aoa_vectors_world_frame_rotation_reflected[path_idx, :] = T_rx_to_world[:3,:3] @ np.array([[-1,0,0],[0,1,0],[0,0,1]]) @ (-1 * aoa_vectors_rx_frame[path_idx, :])
         # aoa_vectors_world_frame_rotation[path_idx, :] = T_rx_to_world[:3,:3] @ aoa_vectors_rx_frame[path_idx, :]
         # aoa_vectors_world_frame_rotation_reflected[path_idx, :] = T_rx_to_world[:3,:3] @ aoa_vectors_rx_frame[path_idx, :]
 
@@ -410,7 +419,7 @@ json.dump(args.__dict__, open(outpath+"/meta.json", 'w'), cls=NumpyEncoder, inde
 
 # Plot results
 
-body_orientation_stride = 100
+body_orientation_stride = 200
 aoa_vector_stride = 10
 
 fig = plt.figure()
@@ -460,17 +469,36 @@ max_strength = signal_strength[maxi, maxj] / 1e4
 if aoa_vector_stride > 0:
     length = 0.2
     n_vectors = 1 # Plot first N paths
+
+
     for i in range(0, len(positions_world), aoa_vector_stride):
-        for j in range(n_vectors):
-            strength = signal_strength[i,j]
-            origin = positions_world[i]
-            tip = aoa_vectors_world[i][j,:]
-            scale = (strength - min_strength)/max_strength
+
+        # Plot the vector with the highest strength
+        max_strength_idx = np.argmax(signal_strength[i, :])
+        strength = signal_strength[i,max_strength_idx]
+        origin = positions_world[i]
+        tip = aoa_vectors_world[i][max_strength_idx,:]
+        # ax.quiver(*origin, *tip, color='purple', length=length )
+        tip2 = aoa_vectors_world_r[i][max_strength_idx,:]
+        # ax.quiver(*origin, *tip2, color='purple', length=length )
+
+        # Plot the vector that points most towards TX
+        if np.linalg.norm( tx_loc - (origin + tip2)) < np.linalg.norm( tx_loc - (origin + tip)): 
+            tip2 = aoa_vectors_world_r[i][max_strength_idx,:]
+            ax.quiver(*origin, *tip2, color='purple', length=length )
+        else:
+            tip = aoa_vectors_world[i][max_strength_idx,:]
             ax.quiver(*origin, *tip, color='purple', length=length )
 
-            tip2 = aoa_vectors_world_r[i][j,:]
-            scale = (strength - min_strength)/max_strength
-            ax.quiver(*origin, *tip2, color='purple', length=length )
+        # for j in range(n_vectors):
+        #     strength = signal_strength[i,j]
+        #     origin = positions_world[i]
+        #     tip = aoa_vectors_world[i][j,:]
+        #     scale = (strength - min_strength)/max_strength
+        #     ax.quiver(*origin, *tip, color='purple', length=length )
+
+        #     tip2 = aoa_vectors_world_r[i][j,:]
+        #     ax.quiver(*origin, *tip2, color='purple', length=length )
 
 ax.set_xlabel("X")
 ax.set_ylabel("Y")
