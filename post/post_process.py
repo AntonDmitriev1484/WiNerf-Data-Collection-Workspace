@@ -103,9 +103,14 @@ print(rostypes)
 # Create reader instance and open for reading.
 with AnyReader([bagpath], default_typestore=rostypes) as reader:
     # Filter for messages within bag timestamp range.
-    START = reader.start_time * 1e-9
-    END = reader.end_time * 1e-9
-    args.crop_start += START
+    START_ = reader.start_time * 1e-9
+    END_ = reader.end_time * 1e-9
+    # args.crop_start += START_ # TODO add back in later
+# START = START_ + 138
+# END = START_ + 158
+
+START = START_
+END = END_
 
 print(f"ROS duration {START} - {END}")
 print(f"Data start {START} cropped to {args.crop_start}")
@@ -133,14 +138,17 @@ Transforms = SimpleNamespace()
 
 Transforms.T_cam1_to_rx = np.eye(4)
 
-t_cam1_to_rx_in_cam1 = np.array([0,-0.089, -0.1525])
-R_cam1_to_rx = np.array([[0,0,1],
+# t_cam1_to_rx_in_cam1 = np.array([-0.1475,0.01, -0.081])
+# R_cam1_to_rx = np.array([[0,0,1],
+#                         [-1,0,0],
+#                         [0,-1,0]])
+# t_rx_to_cam1_in_rx =  np.array([0.1475,0.01, -0.081])
+
+R_cam1_to_rx = np.array([[0,0,-1],
                         [-1,0,0],
                         [0,-1,0]])
-# R_cam1_to_rx = np.array([[0,0,1],
-#                         [1,0,0],
-#                         [0,-1,0]])
-t_rx_to_cam1_in_rx = np.array([0.1525, 0, -0.089])
+t_rx_to_cam1_in_rx =  np.array([-0.1475,0.01, -0.081])
+# Proper rotation from MUSIC frame to camera
 
 
 Transforms.T_cam1_to_rx = np.eye(4)
@@ -153,14 +161,14 @@ Transforms.T_body_to_cam1 = np.linalg.inv(Transforms.T_cam1_to_rx)
 # Transforms = extract_apriltag_pose(slam_data, infra1_raw_frames, Transforms, in_kalibr, in_apriltags)
 # Transforms = extract_apriltag_pose_PnP(slam_data, infra1_raw_frames, Transforms, in_kalibr, in_apriltags)
 
-if args.start_position_world is None:
+if args.start_position_cam is None:
     print(" Need to set manual starting point for this dataset collection!")
     print(" Sorry :(")
     exit()
 
 t_align = args.crop_start -1 # Assume alignment point is the same as what we want to set
 T_world_to_body_at_t_align = np.eye(4)
-cam1_z = 0.2535
+# cam1_z = 0.2535
 
 #
 t_cam1_to_world_in_cam1 = np.array(json.loads(args.start_position_cam))
@@ -173,6 +181,7 @@ R_world_to_cam1 = np.array([[1,0,0],
 # Sometimes you need to apply a manual rotation about the Z-axis so that the trajectory can work properly.
 Transforms.T_adjust_in_world = np.eye(4)
 if args.z_rot_adjust_deg != 0.0:
+    print("ADJUSTING")
     theta = np.deg2rad(args.z_rot_adjust_deg)
     Transforms.T_adjust_in_world[:3,:3] = np.array(
         [[np.cos(theta), -np.sin(theta), 0],
@@ -194,7 +203,7 @@ T_cam1_to_sorigin_talign = slam_quat_to_HTM(slam_data[idx])
 
 # Transforms.T_world_to_sorigin =  T_world_to_cam1_talign @ np.linalg.inv(T_sorigin_to_sbody_at_t_align)
 Transforms.T_world_to_cam1_talign = T_world_to_cam1_talign
-Transforms.T_world_to_sorigin = T_cam1_to_sorigin_talign @ T_world_to_cam1_talign
+Transforms.T_world_to_sorigin = T_cam1_to_sorigin_talign @ T_world_to_cam1_talign @ Transforms.T_adjust_in_world
 
 print(f"{T_world_to_body_at_t_align=}")
 print(f"{T_cam1_to_sorigin_talign=}")
@@ -225,6 +234,22 @@ for i in range(slam_data.shape[0]-1):
 # Compute an interpolated SLAM trajectory of the body pose in the world frame,
 # s.t. each pose is timestamp aligned to each AoA measurement.
 
+# Check timestamps
+# fig, ax = plt.subplots()
+# # Plot each array on a horizontal line
+# ax.scatter(slam_data[:,0], np.zeros_like(slam_data[:,0]), c="blue", label="all_slam", alpha=0.7)
+# ax.scatter(t_router[:], np.ones_like(t_router[:]), c="red", label="t_router", alpha=0.7)
+# ax.axvline(x=START_+args.crop_start)
+
+# # Beautify
+# ax.set_yticks([0, 1])
+# ax.set_xlabel("Value")
+# ax.set_title("1D Scatter Plot of Two Arrays")
+# ax.legend()
+
+# plt.show()
+
+
 N_POINTS = 100
 body_poses_world_frame = [] #Poses of body in world frame, interpolated to match AoA measurements.
 for i in range(t_router.shape[0]):
@@ -236,9 +261,9 @@ for i in range(t_router.shape[0]):
     slam_idx2 = np.argmin(tdiffs)
     istart, iend = sorted([slam_idx1, slam_idx2]) # Make sure indices are ascending
 
-    # Make sure poses we're interpolating between are for the body in the world frame
-    current_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[istart, :]))
-    next_pose = get_T_world_to_body(slam_quat_to_HTM(slam_data[iend, :]))
+    # Poses we're interpolating for are in slam frame
+    current_pose = slam_quat_to_HTM(slam_data[istart, :])
+    next_pose = slam_quat_to_HTM(slam_data[iend, :])
 
     # Now interpolate between these two poses
     interp_interval = [slam_data[istart,0], slam_data[iend, 0]]
@@ -256,9 +281,13 @@ for i in range(t_router.shape[0]):
     # and map that interpolated pose to the measurement
     idx_match = np.argmin(np.abs(interp_timestamps - t_router[i]))
 
-    world_frame_pose = np.eye(4)
-    world_frame_pose[:3,:3] = interpolated_rotations[idx_match].as_matrix()
-    world_frame_pose[:3, 3] = interpolated_positions[idx_match]
+    interpolated_slam_frame_pose = np.eye(4)
+    interpolated_slam_frame_pose[:3,:3] = interpolated_rotations[idx_match].as_matrix()
+    interpolated_slam_frame_pose[:3, 3] = interpolated_positions[idx_match]
+
+    # Now convert interpolated pose to world frame
+    world_frame_pose = get_T_world_to_body(interpolated_slam_frame_pose)
+    # Interpolating in SLAM frame, then converting to world, helps avoid LHS coord system issue.
 
     body_poses_world_frame.append(world_frame_pose)
 
@@ -270,12 +299,20 @@ all_aoa_vectors_world_frame_rotation = []
 
 #
 
+
+tx_loc = np.array(json.load(open(in_tx, 'r'))["position"])
 SYNTHETIC_AOA = False # Just for testing that my transforms are correct.
 import random
 if SYNTHETIC_AOA:
     # In a circle, we expect the AoA to always be pointing inwards, this would be along the +y axis of the rx fraeme
     aoa_rx_frame[:] = np.array([1,0,0])
     
+    for i, pose in enumerate(body_poses_world_frame):
+        T_world_to_rx = pose
+        vec = tx_loc - np.linalg.inv(T_world_to_rx)[:3,3]
+        synth_aoa_world_frame = vec / np.linalg.norm(vec)
+        aoa_rx_frame[i, :] = np.linalg.inv(T_world_to_rx[:3,:3]) @ synth_aoa_world_frame
+
     # Assume AoA vectors at 45 deg.
     # deg_from_x_axis = 75
     # # # Are we positivee, or negative 75 deg from the x-axis?
@@ -285,6 +322,7 @@ if SYNTHETIC_AOA:
     #     for j in range(3):
     #         aoa_rx_frame[i,j,1] *= random.choice([1, -1])
 
+all_aoa_vectors_world_frame_rotation_reflected = []
 
 for i in range(t_router.shape[0]):
 
@@ -293,29 +331,35 @@ for i in range(t_router.shape[0]):
 
 
     aoa_vectors_world_frame = np.empty_like(aoa_vectors_rx_frame)
-
+    aoa_vectors_world_frame_reflected = np.empty_like(aoa_vectors_rx_frame)
+    
     # Using the known pose of the body in the world frame, at time t
     # Map each path at time t into the world frame.
 
     T_world_to_rx = body_poses_world_frame[i]
     T_rx_to_world = np.linalg.inv(T_world_to_rx)
 
-    # This computation takes the 'tip' of the AoA unit vector in rx frame coordinates
-    # And maps it to the 'tip' of the AoA unit vector in world frame coordinates.
-    # This means that this will return points w.r.t world origin, and not w.r.t rx frame origin in world frame.
-    for path_idx in range(n_paths):
-        aoa_vectors_world_frame[path_idx,:] = (T_rx_to_world @ np.append(aoa_vectors_rx_frame[path_idx, :], 1))[:3]
-    all_aoa_vectors_world_frame.append(aoa_vectors_world_frame)
+    # # This computation takes the 'tip' of the AoA unit vector in rx frame coordinates
+    # # And maps it to the 'tip' of the AoA unit vector in world frame coordinates.
+    # # This means that this will return points w.r.t world origin, and not w.r.t rx frame origin in world frame.
+    # for path_idx in range(n_paths):
+    #     aoa_vectors_world_frame[path_idx,:] = (T_rx_to_world @ np.append(aoa_vectors_rx_frame[path_idx, :], 1))[:3]
+    # all_aoa_vectors_world_frame.append(aoa_vectors_world_frame)
 
     # This computation rotates the AoA unit vector from rx frame coordinates into world frame coordinates.
     # This means that the tip of this unit vector will be w.r.t 0,0,0, but its rotation will be
     # consistent with the world axes.
     aoa_vectors_world_frame_rotation = np.empty_like(aoa_vectors_rx_frame)
+    aoa_vectors_world_frame_rotation_reflected = np.empty_like(aoa_vectors_rx_frame)
     for path_idx in range(n_paths):
         v_rx = aoa_vectors_rx_frame[path_idx, :]
         v_world = T_rx_to_world[:3,:3] @ aoa_vectors_rx_frame[path_idx, :]
-        aoa_vectors_world_frame_rotation[path_idx, :] = T_rx_to_world[:3,:3] @ aoa_vectors_rx_frame[path_idx, :]
+        aoa_vectors_world_frame_rotation[path_idx, :] = T_rx_to_world[:3,:3] @ np.array([[1,0,0],[0,-1,0],[0,0,1]]) @ aoa_vectors_rx_frame[path_idx, :]
+        aoa_vectors_world_frame_rotation_reflected[path_idx, :] = T_rx_to_world[:3,:3] @ np.array([[-1,0,0],[0,-1,0],[0,0,1]]) @ aoa_vectors_rx_frame[path_idx, :]
+        # aoa_vectors_world_frame_rotation[path_idx, :] = T_rx_to_world[:3,:3] @ aoa_vectors_rx_frame[path_idx, :]
+        # aoa_vectors_world_frame_rotation_reflected[path_idx, :] = T_rx_to_world[:3,:3] @ aoa_vectors_rx_frame[path_idx, :]
 
+    all_aoa_vectors_world_frame_rotation_reflected.append(aoa_vectors_world_frame_rotation_reflected)
     all_aoa_vectors_world_frame_rotation.append(aoa_vectors_world_frame_rotation)
     # These will provide the RPY of the vector along world frame axes, as measured at the receiver's origin.
 
@@ -324,16 +368,18 @@ valid_timestamp_idx = list(np.where((t_router > args.crop_start) & (t_router < E
 # Apply timestamp filtering here.
 positions_world = []
 aoa_vectors_world = []
+aoa_vectors_world_r = []
 
 
 i=0
 
 body_poses_world_frame_ = []
-for body_pose, aoa_vector in zip(body_poses_world_frame, all_aoa_vectors_world_frame_rotation):
+for body_pose, aoa_vector, aoa_vector_r in zip(body_poses_world_frame, all_aoa_vectors_world_frame_rotation, all_aoa_vectors_world_frame_rotation_reflected):
     if i in valid_timestamp_idx:
         H = np.linalg.inv(body_pose)
         positions_world.append(H[:3,3].flatten())
         aoa_vectors_world.append(aoa_vector)
+        aoa_vectors_world_r.append(aoa_vector_r)
         body_poses_world_frame_.append(body_pose)
     i+=1
 body_poses_world_frame = body_poses_world_frame_
@@ -364,7 +410,7 @@ json.dump(args.__dict__, open(outpath+"/meta.json", 'w'), cls=NumpyEncoder, inde
 
 # Plot results
 
-body_orientation_stride = 50
+body_orientation_stride = 100
 aoa_vector_stride = 10
 
 fig = plt.figure()
@@ -377,9 +423,11 @@ ax.scatter(*positions_world[0], color='green', label='Start')
 ax.scatter(*positions_world[-1], color='red', label='End')
 
 tx_loc = np.array(json.load(open(in_tx, 'r'))["position"])
-ax.scatter(*tx_loc, color = 'purple', s=0.5)
 
-def draw_axes(ax, T, length=0.1):
+ax.scatter(*tx_loc, color = 'purple', s=150)
+
+
+def draw_axes(ax, T, length=0.1, is_tx=False):
     """Draw coordinate axes from transformation matrix T."""
 
     H = np.linalg.inv(T)
@@ -388,14 +436,20 @@ def draw_axes(ax, T, length=0.1):
     y_axis = (H @ np.array([0,1,0,1]))[:3]
     z_axis = (H @ np.array([0,0,1,1]))[:3]
 
-    ax.quiver(*origin, *(x_axis-origin) * length, color='r')
-    ax.quiver(*origin, *(y_axis-origin) * length, color='g')
-    ax.quiver(*origin, *(z_axis-origin) * length, color='b')
+    if is_tx:
+        ax.quiver(*origin, *(x_axis-origin) * length, color='pink')
+        ax.quiver(*origin, *(y_axis-origin) * length, color='pink')
+        ax.quiver(*origin, *(z_axis-origin) * length, color='pink')
+    else:
+        ax.quiver(*origin, *(x_axis-origin) * length, color='r')
+        ax.quiver(*origin, *(y_axis-origin) * length, color='g')
+        ax.quiver(*origin, *(z_axis-origin) * length, color='b')
+
 
 
 if body_orientation_stride > 0:
     for i in range(0, len(body_poses_world_frame), body_orientation_stride):
-        draw_axes(ax, body_poses_world_frame[i], length=0.4)
+        draw_axes(ax, body_poses_world_frame[i], length=0.1)
 
 max_strength_idx = np.argmax(signal_strength)
 print(max_strength_idx)
@@ -404,7 +458,7 @@ maxi, maxj = np.unravel_index(max_strength_idx, signal_strength.shape)
 max_strength = signal_strength[maxi, maxj] / 1e4
 
 if aoa_vector_stride > 0:
-    length = 0.5
+    length = 0.2
     n_vectors = 1 # Plot first N paths
     for i in range(0, len(positions_world), aoa_vector_stride):
         for j in range(n_vectors):
@@ -414,6 +468,10 @@ if aoa_vector_stride > 0:
             scale = (strength - min_strength)/max_strength
             ax.quiver(*origin, *tip, color='purple', length=length )
 
+            tip2 = aoa_vectors_world_r[i][j,:]
+            scale = (strength - min_strength)/max_strength
+            ax.quiver(*origin, *tip2, color='purple', length=length )
+
 ax.set_xlabel("X")
 ax.set_ylabel("Y")
 ax.set_zlabel("Z")
@@ -422,7 +480,7 @@ ax.view_init(elev=20, azim=45)
 ax.legend()
 ax.set_xlim(-1, 3)
 ax.set_ylim(0,4)
-ax.set_zlim(0,2)
+ax.set_zlim(0,4)
 plt.show()
 
 ax.view_init(elev=90, azim=-90)  # elev=90 gives top-down
