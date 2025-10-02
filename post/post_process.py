@@ -15,7 +15,7 @@ from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 from scipy.optimize import minimize
 from types import SimpleNamespace
-
+# test
 import shutil
 import math
 import copy
@@ -28,7 +28,8 @@ from utils.load_pix4dcatch import *
 
 
 import matplotlib.pyplot as plt
-matplotlib.use('TkAgg')
+# matplotlib.use('TkAgg')
+matplotlib.use('Agg')
 
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import pickle
@@ -41,6 +42,7 @@ parser = argparse.ArgumentParser(description="Stream collector")
 parser.add_argument("--trial_name" , "-t", type=str)
 parser.add_argument("--cam_calibration_file", "-c", type=str)
 parser.add_argument("--crop_start", type=float) # From now on this will be relative time from start of recording instead of an absolute timestamp
+parser.add_argument("--crop_end", type=float)
 parser.add_argument("--override_april_start", type=str )
 parser.add_argument("--start_position_cam", type=str ) # start position of world origin in cam1 frame, at alignment point.
 parser.add_argument("--z_rot_adjust_deg", default=0, type=float)
@@ -88,6 +90,7 @@ csi_data = router_data['csi_matrix']
 aoa_rx_frame = router_data['aoa_matrix']
 signal_strength = router_data['strength']
 
+print()
 if args.trial_name == "winerf_trial1": # Split into two trials, so just concatenate the wireless trial of the first to second.
     in_router_data = f'../router/{args.trial_name}_1.npz'
     router_append = np.load(in_router_data)
@@ -129,12 +132,12 @@ print(f"Data start {START} cropped to {args.crop_start}")
 # Data start 1755120873.7234828 cropped to 1755121059.7234828
 
 
-def filtt(arr): # For filtering a json output
-    if args.crop_start is not None: arr = list(filter(lambda x: (args.crop_start <= x["t"]), arr)) # First filter by crop
-    return list(filter(lambda x: (START <= x["t"] <= END), arr)) # Then filter by ros timestamps
-def filtt2(arr): # For filtering a CSV output
-    if args.crop_start is not None: arr = list(filter(lambda x: (args.crop_start <= x[0]), arr))
-    return list(filter(lambda x: (START <= x[0] <= END), arr))
+# def filtt(arr): # For filtering a json output
+#     if (args.crop_start is not None) and (args.crop_end is not None): arr = list(filter(lambda x: (args.crop_start <= x["t"] <= args.crop_end), arr)) # First filter by crop
+#     return list(filter(lambda x: (START <= x["t"] <= END), arr)) # Then filter by ros timestamps
+# def filtt2(arr): # For filtering a CSV output
+#     if (args.crop_start is not None) and (args.crop_end is not None): arr = list(filter(lambda x: (args.crop_start <= x[0] <= args.crop_end), arr))
+#     return list(filter(lambda x: (START <= x[0] <= END), arr))
 
 
 ### Define all coordinate transforms
@@ -156,7 +159,9 @@ Transforms.T_cam1_to_rx = np.eye(4)
 R_cam1_to_rx = np.array([[0,0,-1],
                         [-1,0,0],
                         [0,-1,0]])
-t_rx_to_cam1_in_rx =  np.array([-0.1475,0.01, -0.081])
+# t_rx_to_cam1_in_rx =  np.array([-0.1475,0.01, -0.081]) # For conference room trials
+t_rx_to_cam1_in_rx = np.array([-0.16, 0.02, -0.0725]) # For 3108, 2205, 4237
+
 # Proper rotation from MUSIC frame to camera
 
 
@@ -244,19 +249,20 @@ for i in range(slam_data.shape[0]-1):
 # s.t. each pose is timestamp aligned to each AoA measurement.
 
 # Check timestamps
-# fig, ax = plt.subplots()
-# # Plot each array on a horizontal line
-# ax.scatter(slam_data[:,0], np.zeros_like(slam_data[:,0]), c="blue", label="all_slam", alpha=0.7)
-# ax.scatter(t_router[:], np.ones_like(t_router[:]), c="red", label="t_router", alpha=0.7)
-# ax.axvline(x=START_+args.crop_start)
+fig, ax = plt.subplots()
+# Plot each array on a horizontal line
+ax.scatter(slam_data[:,0], np.zeros_like(slam_data[:,0]), c="blue", label="all_slam", alpha=0.7)
+ax.scatter(t_router[:], np.ones_like(t_router[:]), c="red", label="t_router", alpha=0.7)
+ax.axvline(x=START_+args.crop_start)
 
-# # Beautify
-# ax.set_yticks([0, 1])
-# ax.set_xlabel("Value")
-# ax.set_title("1D Scatter Plot of Two Arrays")
-# ax.legend()
+# Beautify
+ax.set_yticks([0, 1])
+ax.set_xlabel("Value")
+ax.set_title("1D Scatter Plot of RX vs SLAM timestamps")
+ax.legend()
 
-# plt.show()
+plt.savefig(outpath+"/timestamp_viz.jpg", dpi=600, bbox_inches='tight')
+plt.show()
 
 
 N_POINTS = 100
@@ -367,12 +373,20 @@ for i in range(t_router.shape[0]):
         aoa_vectors_world_frame_rotation_reflected[path_idx, :] = T_rx_to_world[:3,:3] @ np.array([[-1,0,0],[0,1,0],[0,0,1]]) @ (-1 * aoa_vectors_rx_frame[path_idx, :])
         # aoa_vectors_world_frame_rotation[path_idx, :] = T_rx_to_world[:3,:3] @ aoa_vectors_rx_frame[path_idx, :]
         # aoa_vectors_world_frame_rotation_reflected[path_idx, :] = T_rx_to_world[:3,:3] @ aoa_vectors_rx_frame[path_idx, :]
+        if np.linalg.norm(v_rx) < 0.99:
+            print(f"non unit vector rx frame? {v_rx=} norm is {np.linalg.norm(v_rx)=}")
 
     all_aoa_vectors_world_frame_rotation_reflected.append(aoa_vectors_world_frame_rotation_reflected)
     all_aoa_vectors_world_frame_rotation.append(aoa_vectors_world_frame_rotation)
     # These will provide the RPY of the vector along world frame axes, as measured at the receiver's origin.
 
-valid_timestamp_idx = list(np.where((t_router > args.crop_start) & (t_router < END))[0])
+# This is because t_router timestamps start with crop_start
+# END - args.crop_end might not nessecarily correspond to the last interpolated tx pose, because its taken from the slam time interval
+
+# This should be over 
+valid_timestamp_idx = list(np.where((t_router > (START + args.crop_start)) & (t_router < (t_router[-1] - args.crop_end)))[0])
+# Not removing enough
+
 
 # Apply timestamp filtering here.
 positions_world = []
@@ -381,6 +395,12 @@ aoa_vectors_world_r = []
 
 
 i=0
+
+print(f"{len(t_router)=}")
+print(f"{len(all_aoa_vectors_world_frame_rotation)=}")
+print(f"{len(body_poses_world_frame)=}")
+print(f"{len(router_data['timestamps'])=}")
+print(f"{len(valid_timestamp_idx)=}")
 
 body_poses_world_frame_ = []
 for body_pose, aoa_vector, aoa_vector_r in zip(body_poses_world_frame, all_aoa_vectors_world_frame_rotation, all_aoa_vectors_world_frame_rotation_reflected):
@@ -393,17 +413,29 @@ for body_pose, aoa_vector, aoa_vector_r in zip(body_poses_world_frame, all_aoa_v
     i+=1
 body_poses_world_frame = body_poses_world_frame_
 
-print(positions_world[:5])
+timestamps = t_router[valid_timestamp_idx]
+csi_data = csi_data[valid_timestamp_idx]
+aoa_matrix = aoa_rx_frame[valid_timestamp_idx]
+strength = signal_strength[valid_timestamp_idx]
+aoa_matrix_world=aoa_vectors_world
+positions_world=positions_world
+print("Final lengths")
+print(f"{len(timestamps)=}")
+print(f"{len(csi_data)=}")
+print(f"{len(aoa_matrix)=}")
+print(f"{len(strength)=}")
+print(f"{len(aoa_matrix_world)=}")
+print(f"{len(positions_world)=}")
+
 np.savez(
         outpath+"/roomba_data_world.npz", 
-        timestamps = router_data['timestamps'], 
-        csi_data = router_data['csi_matrix'],
-        aoa_matrix = router_data['aoa_matrix'],
-        strength = router_data['strength'],
-        aoa_matrix_world=aoa_vectors_world, 
+        timestamps = timestamps, 
+        csi_data = csi_data,
+        aoa_matrix = aoa_matrix,
+        strength = strength,
+        aoa_matrix_world=aoa_matrix_world, 
         positions_world=positions_world
         )
-
 
 ### Copy all world information: transforms, anchors, apriltags, to output
 with open(f'{outpath}/transforms.json', 'w') as fs: json.dump(vars(Transforms), fs, cls=NumpyEncoder, indent=1)
@@ -420,7 +452,9 @@ json.dump(args.__dict__, open(outpath+"/meta.json", 'w'), cls=NumpyEncoder, inde
 # Plot results
 
 body_orientation_stride = 200
-aoa_vector_stride = 10
+# aoa_vector_stride = 10
+# body_orientation_stride = 0
+aoa_vector_stride = 0
 
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
@@ -461,10 +495,10 @@ if body_orientation_stride > 0:
         draw_axes(ax, body_poses_world_frame[i], length=0.1)
 
 max_strength_idx = np.argmax(signal_strength)
-print(max_strength_idx)
 min_strength = 1e-5
 maxi, maxj = np.unravel_index(max_strength_idx, signal_strength.shape)
 max_strength = signal_strength[maxi, maxj] / 1e4
+
 
 if aoa_vector_stride > 0:
     length = 0.2
@@ -481,6 +515,9 @@ if aoa_vector_stride > 0:
         # ax.quiver(*origin, *tip, color='purple', length=length )
         tip2 = aoa_vectors_world_r[i][max_strength_idx,:]
         # ax.quiver(*origin, *tip2, color='purple', length=length )
+
+        if np.linalg.norm(tip) < 1:
+            print(f"non unit vector world frame? {tip=} norm is {np.linalg.norm(tip)=}")
 
         # Plot the vector that points most towards TX
         if np.linalg.norm( tx_loc - (origin + tip2)) < np.linalg.norm( tx_loc - (origin + tip)): 
@@ -509,12 +546,13 @@ ax.legend()
 ax.set_xlim(-1, 3)
 ax.set_ylim(0,4)
 ax.set_zlim(0,4)
-plt.show()
 
 ax.view_init(elev=90, azim=-90)  # elev=90 gives top-down
 # Save to PNG with controlled resolution
-plt.savefig(outpath+"trial_viz.jpg", dpi=600, bbox_inches='tight')
+plt.savefig(outpath+"/trial_viz.jpg", dpi=600, bbox_inches='tight')
 pickle.dump(fig, open(outpath+"/trial_viz.pickle", 'wb'))
+plt.show()
+
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
