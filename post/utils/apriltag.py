@@ -28,7 +28,7 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
 from scipy.spatial.transform import Rotation as R
 
 from utils.load_rostypes import *
-from dt_apriltags import Detector
+# from dt_apriltags import Detector
 from utils.math_utils import * 
 
 import pickle
