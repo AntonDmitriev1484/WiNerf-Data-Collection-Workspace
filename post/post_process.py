@@ -69,7 +69,7 @@ in_arkit = f'../arkit/{args.trial_name}/input_cameras.json'
 in_kalibr = f"../kalibr/camimu_out/{args.cam_calibration_file}-camchain-imucam.yaml"
 in_tx = f"../world/{args.in_tx_location}"
 
-bagpath = Path(f'../collect/ros2/{args.trial_name}')
+# bagpath = Path(f'../collect/ros2/{args.trial_name}')
 
 
 if args.use_arkit:
@@ -108,23 +108,25 @@ if args.trial_name == "winerf_trial1": # Split into two trials, so just concaten
 all_data = []
 gt_standalone = []
 
-rostypes = load_rostypes()
-print(rostypes)
+# rostypes = load_rostypes()
+# print(rostypes)
 
-# Create reader instance and open for reading.
-with AnyReader([bagpath], default_typestore=rostypes) as reader:
-    # Filter for messages within bag timestamp range.
-    START_ = reader.start_time * 1e-9
-    END_ = reader.end_time * 1e-9
-    # args.crop_start += START_ # TODO add back in later
-    # args.crop_end = END_ - args.crop_end
-# START = START_ + 138
-# END = START_ + 158
+# # Create reader instance and open for reading.
+# with AnyReader([bagpath], default_typestore=rostypes) as reader:
+#     # Filter for messages within bag timestamp range.
+#     START_ = reader.start_time * 1e-9
+#     END_ = reader.end_time * 1e-9
+#     # args.crop_start += START_ # TODO add back in later
+#     # args.crop_end = END_ - args.crop_end
+# # START = START_ + 138
+# # END = START_ + 158
 
-START = START_
-END = END_
+# START = START_
+# END = END_
 
-print(f"ROS duration {START} - {END}")
+START = slam_data[0,0]
+END = slam_data[0,-1]
+print(f"SLAM duration {START} - {END}")
 print(f"Data start {START} cropped to {args.crop_start}")
 
 # winerf_prelim2
