@@ -19,23 +19,26 @@ from types import SimpleNamespace
 import shutil
 import math
 import copy
-
-from utils.load_rostypes import *
-from utils.ros_msg_handlers import *
-from utils.math_utils import *
-from utils.load_pix4dcatch import *
+import sys
+# Add repo root (../) to sys.path
+# repo_root = Path(__file__).resolve().parent
+# if str(repo_root) not in sys.path:
+#     sys.path.append(str(repo_root))
+# print(sys.path)
+# from utils.load_rostypes import *
+# from utils.ros_msg_handlers import *
+from math_utils import *
+# from utils.load_pix4dcatch import *
 
 import matplotlib
-matplotlib.use("TkAgg")   # non-interactive backend for saving files
+matplotlib.use("Agg")   # non-interactive backend for saving files
 import matplotlib.pyplot as plt
 
 
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import pickle
 # Example usage:
-# python3 post_process.py -t stereoi_sq -c cam_target_daslab -a pilot3/anchors.json -p pilot3/apriltags.json -i 10
-
-# python3 post_process.py -t winerf_prelim2 -c cam_target_daslab --crop_start 186 --override_april_start='[0,0.25,0.2535]' --in_tx_location='[0,3,0.57]' --plot_world True
+# python3 post_process.py -t winerf_prelim2 -c cam_target_daslab --crop_start 186 --start_position_cam '[0,0.25,0.2535]' --in_tx_location winerf_prelim2/tx.json --plot_world True --crop_start 0 --crop_end 0
 
 parser = argparse.ArgumentParser(description="Stream collector")
 parser.add_argument("--trial_name" , "-t", type=str)
