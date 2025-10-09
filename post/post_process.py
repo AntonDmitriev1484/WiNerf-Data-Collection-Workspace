@@ -20,18 +20,11 @@ import shutil
 import math
 import copy
 import sys
-# Add repo root (../) to sys.path
-# repo_root = Path(__file__).resolve().parent
-# if str(repo_root) not in sys.path:
-#     sys.path.append(str(repo_root))
-# print(sys.path)
-# from utils.load_rostypes import *
-# from utils.ros_msg_handlers import *
 from math_utils import *
 # from utils.load_pix4dcatch import *
 
 import matplotlib
-matplotlib.use("Agg")   # non-interactive backend for saving files
+matplotlib.use("TkAgg")   # non-interactive backend for saving files
 import matplotlib.pyplot as plt
 
 
@@ -169,13 +162,16 @@ Transforms.T_cam1_to_rx = np.eye(4)
 R_cam1_to_rx = np.array([[0,0,1],
                         [1,0,0],
                         [0,-1,0]])
-# t_rx_to_cam1_in_rx =  np.array([-0.1475,0.01, -0.081]) # For conference room trials
 
-t_rx_to_cam1_in_rx = np.array([0,0,0]) # TODO: Find this translation w.r.t new rotation somewhere in my notes
-# t_rx_to_cam1_in_rx = np.array([-0.16, 0.02, -0.0725]) # For 3108, 2205, 4237
+conference_room_trial = "winerf_trial" in args.trial_name
+t_rx_to_cam1_in_rx = np.array([0,0,0])
+if conference_room_trial:
+    t_rx_to_cam1_in_rx =  np.array([0.1475,-0.01, -0.081]) # For conference room trials
+else:
+    t_rx_to_cam1_in_rx = np.array([0.16,-0.02,-0.0725]) # For 3108, 2205, 4237
+
 
 # Proper rotation from MUSIC frame to camera
-
 
 Transforms.T_cam1_to_rx = np.eye(4)
 Transforms.T_cam1_to_rx[:3,:3] = R_cam1_to_rx
