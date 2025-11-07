@@ -163,10 +163,14 @@ R_cam1_to_rx = np.array([[0,0,1],
                         [1,0,0],
                         [0,-1,0]])
 
-conference_room_trial = "winerf_trial" in args.trial_name
 t_rx_to_cam1_in_rx = np.array([0,0,0])
+
+conference_room_trial = "winerf_trial" in args.trial_name
+blocking_trial = "block" in args.trial_name
 if conference_room_trial:
     t_rx_to_cam1_in_rx =  np.array([0.1475,-0.01, -0.081]) # For conference room trials
+elif blocking_trial:
+    t_rx_to_cam1_in_rx =  np.array([0.165,-0.01, -0.085]) # For blocking trial (last trial in conference room)
 else:
     t_rx_to_cam1_in_rx = np.array([0.16,-0.02,-0.0725]) # For 3108, 2205, 4237
 
