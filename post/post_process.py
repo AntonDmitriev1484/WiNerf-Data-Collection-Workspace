@@ -84,6 +84,7 @@ t_router = router_data['timestamps']
 csi_data = router_data['csi_matrix']
 aoa_rx_frame = router_data['aoa_matrix']
 signal_strength = router_data['strength']
+rssi = router_data['rssi']
 
 print()
 if args.trial_name == "winerf_trial1": # Split into two trials, so just concatenate the wireless trial of the first to second.
@@ -94,6 +95,7 @@ if args.trial_name == "winerf_trial1": # Split into two trials, so just concaten
     csi_data = np.concatenate([csi_data, router_append['csi_matrix']])
     aoa_rx_frame = np.concatenate([aoa_rx_frame, router_append['aoa_matrix']])
     signal_strength = np.concatenate([signal_strength, router_data['strength']])
+    rssi = np.concatenate([rssi, router_data['rssi']])
 
 # for i in range(len(aoa_rx_frame)):
 #     for j in range(3):
@@ -158,6 +160,7 @@ Transforms.T_cam1_to_rx = np.eye(4)
 #                         [-1,0,0],
 #                         [0,-1,0]])
 
+
 # New rotation as of 10/02/25
 R_cam1_to_rx = np.array([[0,0,1],
                         [1,0,0],
@@ -183,6 +186,7 @@ Transforms.T_cam1_to_rx[:3,3]= t_rx_to_cam1_in_rx
 
 # Transforms.T_cam1_to_rx[:3,:3] = np.array([[0,0,1], [-1,0,0], [0,-1,0]])
 Transforms.T_body_to_cam1 = np.linalg.inv(Transforms.T_cam1_to_rx)
+
 
 # Transforms = extract_apriltag_pose(slam_data, infra1_raw_frames, Transforms, in_kalibr, in_apriltags)
 # Transforms = extract_apriltag_pose_PnP(slam_data, infra1_raw_frames, Transforms, in_kalibr, in_apriltags)
@@ -427,8 +431,10 @@ timestamps = t_router[valid_timestamp_idx]
 csi_data = csi_data[valid_timestamp_idx]
 aoa_matrix = aoa_rx_frame[valid_timestamp_idx]
 strength = signal_strength[valid_timestamp_idx]
+rssi = rssi[valid_timestamp_idx]
 aoa_matrix_world=aoa_vectors_world
 positions_world=positions_world
+aoa_materix_world_r=aoa_vectors_world_r
 print("Final lengths")
 print(f"{len(timestamps)=}")
 print(f"{len(csi_data)=}")
@@ -436,16 +442,19 @@ print(f"{len(aoa_matrix)=}")
 print(f"{len(strength)=}")
 print(f"{len(aoa_matrix_world)=}")
 print(f"{len(positions_world)=}")
+print(f"{len(rssi)=}")
 
 np.savez(
-        outpath+"/roomba_data_world.npz", 
+        outpath+f"/{args.trial_name}_roomba_data_world.npz", 
         timestamps = timestamps, 
         csi_data = csi_data,
         aoa_matrix = aoa_matrix,
         strength = strength,
         aoa_matrix_world=aoa_matrix_world, 
         positions_world=positions_world,
-        poses_world =body_poses_world_frame
+        poses_world =body_poses_world_frame,
+        rssi=rssi,
+        aoa_materix_world_r=aoa_materix_world_r
         )
 
 
@@ -473,7 +482,7 @@ json.dump(args.__dict__, open(outpath+"/meta.json", 'w'), cls=NumpyEncoder, inde
 # Plot results
 
 body_orientation_stride = 200
-aoa_vector_stride = 10
+aoa_vector_stride = 30
 # body_orientation_stride = 0
 # aoa_vector_stride = 0
 
@@ -523,35 +532,40 @@ max_strength = signal_strength[maxi, maxj] / 1e4
 
 if aoa_vector_stride > 0:
     length = 0.2
-    n_vectors = 1 # Plot first N paths
+    n_vectors = 3 # Plot first N paths
 
 
     for i in range(0, len(positions_world), aoa_vector_stride):
 
         # Plot the vector with the highest strength
-        # max_strength_idx = np.argmax(signal_strength[i, :])
+        max_strength_idx = np.argmax(signal_strength[i, :])
         plot_idx = 0
-        strength = signal_strength[i,plot_idx]
-        origin = positions_world[i]
-        # print(aoa_vectors_rx_frame[i])
-        # tip = aoa_rx_frame[i,0, :]
-        tip = aoa_vectors_world[i][plot_idx,:] #[:, 0, :]
-        ax.quiver(*origin, *tip, color='purple', length=length )
+        for j in range(n_vectors):
+            plot_idx = j
+            strength = signal_strength[i,plot_idx]
+            origin = positions_world[i]
+            # print(aoa_vectors_rx_frame[i])
+            # tip = aoa_rx_frame[i,0, :]
+            tip = aoa_vectors_world[i][plot_idx,:] #[:, 0, :]
+            # ax.quiver(*origin, *tip, color='purple', length=length )
 
-        # ax.quiver(*origin, *tip, color='purple', length=length )
-        tip2 = aoa_vectors_world_r[i][plot_idx,:]
-        # # ax.quiver(*origin, *tip2, color='purple', length=length )
-
-        # if np.linalg.norm(tip) < 1:
-        #     print(f"non unit vector world frame? {tip=} norm is {np.linalg.norm(tip)=}")
-
-        # # Plot the vector that points most towards TX
-        if np.linalg.norm( tx_loc - (origin + tip2)) < np.linalg.norm( tx_loc - (origin + tip)): 
+            # ax.quiver(*origin, *tip, color='purple', length=length )
             tip2 = aoa_vectors_world_r[i][plot_idx,:]
-            ax.quiver(*origin, *tip2, color='purple', length=length )
-        else:
-            tip = aoa_vectors_world[i][plot_idx,:]
-            ax.quiver(*origin, *tip, color='purple', length=length )
+            # ax.quiver(*origin, *tip2, color='purple', length=length )
+
+            # if np.linalg.norm(tip) < 1:
+            #     print(f"non unit vector world frame? {tip=} norm is {np.linalg.norm(tip)=}")
+
+            # Plot the vector that points most towards TX
+            if np.linalg.norm( tx_loc - (origin + tip2)) < np.linalg.norm( tx_loc - (origin + tip)): 
+                tip2 = aoa_vectors_world_r[i][plot_idx,:]
+                ax.quiver(*origin, *tip2, color='red', length=length )
+            else:
+                tip = aoa_vectors_world[i][plot_idx,:]
+                ax.quiver(*origin, *tip, color='purple', length=length )
+            
+        # tip2 = aoa_vectors_world_r[i][plot_idx,:]
+        # ax.quiver(*origin, *tip2, color='red', length=length )
 
         # for j in range(n_vectors):
         #     strength = signal_strength[i,j]
