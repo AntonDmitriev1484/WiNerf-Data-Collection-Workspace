@@ -2,7 +2,7 @@
     <param name="use_sim_time" value="false" />
 
     <!-- Main node -->
-    <node name="orb_slam3" pkg="orb_slam3_ros" type="ros_stereo_inertial" output="screen">
+    <node name="orb_slam3" pkg="orb_slam3_ros" type="ros_stereo_inertial" output="screen" launch-prefix="nice -n -19">
         <!-- change the topics according to the dataset -->
         <remap from="/camera/left/image_raw"    to="/camera/camera/infra1/image_rect_raw"/>
         <remap from="/camera/right/image_raw"   to="/camera/camera/infra2/image_rect_raw"/>
@@ -16,11 +16,11 @@
         <param name="world_frame_id"    type="string"   value="world" />
         <param name="cam_frame_id"      type="string"   value="camera" />
         <param name="imu_frame_id"      type="string"   value="imu" />
-        <param name="enable_pangolin"   type="bool"     value="false" />
+        <param name="enable_pangolin"   type="bool"     value="true" />
     </node>
     
     <!-- Visualization -->
-    <!--<node name="rviz" pkg="rviz" type="rviz" args="-d $(find orb_slam3_ros)/config/orb_slam3_with_imu.rviz" output="screen" />-->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find orb_slam3_ros)/config/orb_slam3_with_imu.rviz" output="screen" />
     
     <!-- Trajectory path -->
     <node pkg="hector_trajectory_server" type="hector_trajectory_server" name="trajectory_server_orb_slam3" output="screen" ns="orb_slam3_ros" >

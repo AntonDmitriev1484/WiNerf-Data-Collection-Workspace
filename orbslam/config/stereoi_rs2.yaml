@@ -62,7 +62,7 @@ Camera.fps: 30
 Camera.RGB: 0
 
 # Close/Far threshold. Baseline times.
-Stereo.ThDepth: 50.0
+Stereo.ThDepth: 35.0
 
 #--------------------------------------------------------------------------------------------
 # IMU Parameters
